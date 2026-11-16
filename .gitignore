@@ -1,0 +1,11 @@
+.DS_Store
+.build/
+.swiftpm/
+*.xcodeproj/xcuserdata/
+xcuserdata/
+DerivedData/
+.env*
+.idea/
+.vscode/
+.gemini/
+.agents/
