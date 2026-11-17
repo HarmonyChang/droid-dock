@@ -4,6 +4,8 @@
 *.xcodeproj/xcuserdata/
 xcuserdata/
 DerivedData/
+dist/
+.tmp/
 .env*
 .idea/
 .vscode/

@@ -92,10 +92,11 @@ protocol DeviceBackend: Sendable { func events() -> AsyncStream<DeviceEvent>; fu
 - **【决策】热插拔**：用 IOKit `IOServiceAddMatchingNotification`（first-match 与 terminated）作为触发器，触发后重新枚举设备。具体 USB 接口类匹配以实机为准，不硬编码。
 - **【决策】断线处理**：任何调用遇到断线都抛 `.disconnected`，会话销毁，未完成传输标记失败并保留 `.part` 清理逻辑。
 
-已知坑（均为 **【待验证】**，M0 阶段逐项确认）：
+已知坑（M0 阶段逐项确认，已验证项标 **【已验证】**）：
 
-- macOS 自带的 `ptpcamerad` 等图像捕获守护进程可能独占设备的 MTP/PTP 接口，导致 IOUSBHost 打开接口失败（`kIOReturnExclusiveAccess`）。需在 macOS 27 实机确认现象，并找到不关闭系统服务、不使用私有权限的合规方案；若无，则需重新评估方案。
-- 手机锁屏或 USB 用途为"仅充电"时，MTP 存储为空或枚举失败，必须映射为 `.locked` 并引导用户，不能表现为"空设备"。
+- **【已验证 2026-11-16】** `ptpcamerad` 独占问题（macOS 27.2.1 + OnePlus 13T 实测）：手机开启文件传输后，`icdd` 会拉起当前用户（非 root）的 `/usr/libexec/ptpcamerad` 独占 `IOUSBHostInterface`（`UsbExclusiveOwner`），导致 `IOUSBHostInterface` 初始化报错 `-536870199`（`kIOReturnInternalError` / `Failed [super init]`；同理独占场景亦可能触发 `kIOReturnExclusiveAccess`）。实测 `.deviceSeize` 被拒、`.deviceCapture` 需受限虚拟化权限（`-536870207` / `kIOReturnNotPrivileged`）、`configure(0)` 会中断 Android `f_mtp`、`IOUSBHostDevice.reset()` 会触发 ColorOS 退回「仅充电」。**【决策】** 采用「热插拔监听抢先打开 + 若遇独占错误自动结束当前用户的 `ptpcamerad` 进程并在毫秒级重试打开接口」，无需 `sudo` 或特殊权限，且不重置手机端 USB 状态。
+- **【已验证 2026-11-16】** 第三方跨屏助手 AOA 抢占（macOS 27.2.1 + OnePlus 13T + `O+Connect Service` 实测）：若 Mac 安装有厂商跨屏工具（如 `O+Connect Service`），其后台服务会在手机枚举为 MTP（`0x22d9/2764`）约 1.9 秒后打开父级 `IOUSBHostDevice` 并向 endpoint 0 下发 AOA 切换指令，将手机切至 `0x18d1/2d00` 后退出，导致手机回落「仅充电」（`GetStorageIDs` 返回 0 个存储）；且在我方释放 `IOUSBHostDevice` 后约 1.8 秒内该服务会再次介入劫持。**【决策】** 打开 MTP `IOUSBHostInterface` 的同时通过 `IOUSBHostDevice(..., options: [.deviceSeize])` **持续锁定**父级 `IOUSBHostDevice` 直至设备断开或应用退出（可阻止其他进程打开设备发送控制请求，`kIOReturnExclusiveAccess` / `-536870203`）。
+- **【已验证 2026-11-16】** 手机锁屏或 USB 用途为"仅充电"时，MTP 允许 `OpenSession` 但 `GetStorageIDs` 返回 `0x2001` 且存储列表为空（0 项），必须映射为 `.locked` 并引导用户，不能表现为"空设备"。
 - 大目录（DCIM 数千项）首次 `list` 很慢，UI 必须流式或分批呈现。
 
 ## 5. 传输层
@@ -119,7 +120,7 @@ protocol DeviceBackend: Sendable { func events() -> AsyncStream<DeviceEvent>; fu
 
 - 扫描根目录为主存储的 `DCIM/**`、`Pictures/**`、`Movies/**`。照片扩展名：jpg、jpeg、png、heic、heif、webp、gif、dng；视频扩展名：mp4、mov、mkv、3gp、webm。
 - 截图判定：路径含 `Screenshots`。
-- 按日期降序、按自然日分组；日期取对象信息中的拍摄或修改时间，缺失则回退文件修改时间。**【待验证】** MTP 日期字段的质量与时区行为。
+- 按日期降序、按自然日分组；日期取对象信息中的拍摄或修改时间，缺失则回退文件修改时间。**【部分验证 2026-11-16】** OnePlus 13T 实测对象返回 `YYYYMMDDThhmmss` 无时区后缀格式（如 `20260115T201015`）；其余厂商及夏令时/时区行为 **【待验证】**。
 - 首次连接在后台低优先级递归扫描，结果写入 SQLite 表 `media_index(device, storage, path, size, mtime, kind)`；重连时用目录列表比对做增量刷新；UI 按每批 500 项增量更新。
 
 **缩略图流水线**（按顺序，命中即停）：内存 `NSCache` → 磁盘缓存 → 后端原生缩略图（`FileProvider.thumbnail`）→ 兜底：下载到临时文件后，照片用 ImageIO `CGImageSourceCreateThumbnailAtIndex`、视频用 `AVAssetImageGenerator` 生成，写入缓存。
@@ -127,8 +128,8 @@ protocol DeviceBackend: Sendable { func events() -> AsyncStream<DeviceEvent>; fu
 - 缩略图最长边 320 px；磁盘缓存键为 `sha1(deviceID|storage|path|size|mtime)`；默认总上限 2 GB，LRU 淘汰，位于系统 Caches 目录。
 - 设备 IO 遵守第 4 节串行约束；Mac 侧解码并发上限为 `min(4, 核心数)`。
 - 可见优先：单元格滚出视口时取消其未开始的请求。
-- 可选优化 **【待验证】**：对 JPEG 用部分读取前 64 KB 提取 EXIF 内嵌缩略图，依赖设备是否支持部分读取。
-- 预览：空格键触发，将文件下载到临时缓存后用 `QLPreviewPanel` 展示。
+- 可选优化 **【部分验证 2026-11-16】**：对 JPEG 用部分读取前 64 KB 提取 EXIF 内嵌缩略图；OnePlus 13T 实测 `GetPartialObject` 返回 `0x2001` 成功读取（已在 `.nomedia` 验证），真实 JPEG 64 KB 截断提取与原生 `GetThumb` 数据对比 **【待验证】**。
+- **预览与查看**：双击照片打开内建高清图片查看器（支持**双击图片在 1.0x ↔ 2.5x 间放大/还原**、双指捏合 1.0x–4.0x、拖拽平移及左右切换相邻照片）；空格键触发图片查看器或调用系统 `QLPreviewPanel` 预览视频与文档。
 
 ## 7. UI 规格
 
@@ -141,11 +142,17 @@ protocol DeviceBackend: Sendable { func events() -> AsyncStream<DeviceEvent>; fu
 - 内容区：过滤标签（全部、照片、视频、截图）；按日期分组的缩略图网格，单元格为正方形，最小宽 132 pt，间距 6 pt，圆角 8 pt；选中为 3 pt 主色描边加右上角对勾徽标；视频单元格左下角显示时长徽标。
 - 传输托盘：窗口底部悬浮，高 56 pt，圆角 12 pt，带轻阴影；显示任务名、`已传/总量 · 速度 · 剩余时间`、进度条、取消按钮。
 
-**设计取值**（实现时优先用系统语义色与 Asset Catalog 的 AccentColor，下表为设计稿数值，便于对照）：主色 `#2B5FE0`，侧栏底 `#EEEEF1`，分割线 `#E5E5EA`，主文字 `#1D1D1F`，次文字 `#636366`，成功 `#1E7A3C`，警告 `#B7791F`。字体用系统字体（`-apple-system`），中文回退 PingFang SC。
+**设计取值**（已实装 4 套可实时切换并持久化于 `UserDefaults` 的「儒雅彩色」温润浅色配色，默认**方案 B · 黛蓝宋锦 `songIndigo`**）：
 
-**交互**：双击目录进入、双击文件预览；空格 Quick Look；⌘A 全选；Shift/⌘ 多选；Delete 键触发删除确认；拖出到 Finder 为下载，拖入窗口为上传。
+- **方案 A · 竹青宣纸（`bambooPaper`）**：侧栏底 `#F4F1EA`、内容底 `#FAF8F3`、主色 `#2E6F65`、主字 `#1E2421`、次字 `#626C66`。
+- **方案 B · 黛蓝宋锦（`songIndigo`，默认）**：侧栏底 `#F2EFE9`、内容底 `#FBF9F5`、主色 `#355C7D`、主字 `#1D2228`、次字 `#616873`。
+- **方案 C · 松烟茶白（`pineTea`）**：侧栏底 `#F3EFE7`、内容底 `#FAF8F2`、主色 `#4A6B53`、主字 `#23221E`、次字 `#6E685F`。
+- **方案 D · 晨雾晴岚（`morningMist`）**：侧栏底 `#EEF2F7`、内容底 `#F9FBFD`、主色 `#3B66B0`、主字 `#1C222B`、次字 `#5E6877`。
+- 字体用系统字体（`-apple-system`），中文回退 PingFang SC；导航与文件分类采用低饱和彩色徽标卡片。
 
-**必须覆盖的状态**：无设备（连接引导）、设备已连接但被锁定（提示"解锁手机，并在 USB 用途中选择文件传输"）、首次扫描中、目录为空、错误横幅、传输中途断线。
+**交互**：双击目录进入、双击照片打开内建查看器（支持双击图片在 1.0x ↔ 2.5x 间放大/还原，左右方向键与左右浮层按钮切换相邻照片，其余非目录文件下载后调用 Quick Look）；空格预览；⌘A 全选；Shift/⌘ 多选；Delete 键触发删除确认；拖出到 Finder 为下载，拖入窗口为上传；支持菜单「设备与诊断 → 导出诊断日志…」。
+
+**必须覆盖的状态**：无设备（连接引导）、设备已连接但尚未开放文件权限（自动轮询存储就绪并支持立即重试）、首次扫描中、目录为空、错误横幅、传输中途断线。
 
 ## 8. 里程碑与验收
 
@@ -153,7 +160,10 @@ protocol DeviceBackend: Sendable { func events() -> AsyncStream<DeviceEvent>; fu
 - **M1 设备层与文件视图**：热插拔、存储列表、目录导航、锁定态识别。验收：拔插设备 UI 正确更新，锁屏有明确提示。
 - **M2 传输**：下载、上传、队列、托盘、拖入拖出、冲突策略。验收：混合 1 GB 级文件批量双向传输成功，取消与断线后无残留 `.part` 文件。
 - **M3 相册与缩略图**：媒体索引、网格、缓存、预览。验收：5000 张照片的相册首屏可交互，滚动无明显卡顿，重连后增量刷新。
-- **M4 打磨与分发**：错误与空状态补全、日志、签名与公证。验收：干净 Mac 上安装可运行。
+- **M4 打磨与分发**：品牌 Logo 与 `AppIcon.appiconset`、错误与空状态补全、进程内日志导出（`OSLogStore`）、`codesign` 签名与 `.dmg` 安装包（[package-app.sh](scripts/package-app.sh)）。验收：独立构建的 `dist/DroidDock.app` 与 `.dmg` 签名校验通过并在本机可安装运行。
+- **M5（第二阶段）双模式同网无线传输与连接**：
+  - **默认 · 新手扫码快传（[QuickDropWebServer](DroidDock/Services/QuickDropWebServer.swift)）**：Mac 端基于 `Network.framework` 启动带一次性安全令牌的局域网 HTTP 传图/传文件/传文件夹服务，手机相机或微信/浏览器扫码即开极简中文网页（免安装端侧 App、免开开发者选项、手机不断网），支持手机批量传图/视频或整个文件夹（保留目录结构）到 Mac，以及 Mac 拖放文件或文件夹后在手机端按 3 列缩略图网格预览相册（含全屏大图/视频灯箱切换）并一键 ZIP 打包下载文件夹。
+  - **进阶 · 同网无线调试发现与扫码直连**：基于 Android 系统内置无线调试 + Bonjour（`_adb-tls-connect._tcp.` / `_adb-tls-pairing._tcp.`）实现同一 Wi-Fi 下自动发现、扫码配对（`WIFI:T:ADB;S:...;P:...;;`）与 6 位配对码直连，不切换热点、不影响手机正常上网，并通过 [ADBFileProvider](DroidDock/Device/ADB/ADBProvider.swift) 与 [CompositeDeviceBackend](DroidDock/Device/DeviceManager.swift) 无缝接入统一相册、缩略图与双向拖拽传输（界面内置各品牌手机无线调试分步开启教程）。
 
 ## 9. 工程约定
 
@@ -164,8 +174,8 @@ protocol DeviceBackend: Sendable { func events() -> AsyncStream<DeviceEvent>; fu
 
 ## 10. 风险汇总
 
-1. IOUSBHost 能否在 macOS 27 上合规打开 MTP 接口（`ptpcamerad` 独占问题），是 M0 的首要风险，也决定路线是否成立。
-2. 沙盒与 USB entitlement 的组合未验证。
+1. ~~`ptpcamerad` 独占问题~~（已于 2026-11-16 在 macOS 27.2.1 实机验证：采用热插拔抢先打开 + 遇 `kIOReturnExclusiveAccess` 自动结束当前用户 `ptpcamerad` 并重试接管，后续随 macOS 升级需继续回归，且仅适用非沙盒环境）。
+2. 沙盒与 USB entitlement 的组合未验证（v0.1 默认关闭沙盒；若未来需上架沙盒化，结束外部用户态进程 `ptpcamerad` 将受沙盒限制）。
 3. macOS 守护进程占用 USB 接口的问题需实机确认。
 4. MTP 日期字段、缩略图支持、大于 4 GB 传输、非法文件名集合在不同厂商设备上可能表现不一。
 5. 系统大版本兼容：每次 macOS 大版本发布都需要回归测试（同类竞品 OpenMTP、MacDroid 均发布过系统兼容修复），这是长期维护成本。

@@ -24,6 +24,12 @@ public enum MTPOperation {
 
 public enum MTPResponseCode {
     public static let ok: UInt16 = 0x2001
+    public static let invalidObjectHandle: UInt16 = 0x2009
+    public static let storeFull: UInt16 = 0x200C
+    public static let objectWriteProtected: UInt16 = 0x200D
+    public static let storeReadOnly: UInt16 = 0x200E
+    public static let accessDenied: UInt16 = 0x200F
+    public static let invalidParentObject: UInt16 = 0x201A
     public static let sessionAlreadyOpen: UInt16 = 0x201E
 }
 
@@ -88,6 +94,18 @@ public struct ByteWriter {
     public init() {}
     public mutating func u16(_ v: UInt16) { data.append(contentsOf: [UInt8(v & 0xFF), UInt8(v >> 8)]) }
     public mutating func u32(_ v: UInt32) { for i in 0..<4 { data.append(UInt8((v >> (8 * UInt32(i))) & 0xFF)) } }
+
+    /// 写入 MTP 字符串：1 字节字符数（含结尾 0），后接 UTF-16LE；空串写入单个 0 字节。
+    public mutating func string(_ s: String) {
+        if s.isEmpty {
+            data.append(0)
+            return
+        }
+        let units = Array(s.utf16.prefix(254))
+        data.append(UInt8(units.count + 1))
+        for u in units { u16(u) }
+        u16(0)
+    }
 }
 
 public struct ByteReader {
@@ -217,5 +235,52 @@ public struct MTPObjectInfo: Sendable {
             handle: handle, storageID: storage, format: format, compressedSize: size,
             thumbFormat: thumbFormat, parent: parent, filename: try r.string(),
             dateCreated: try r.string(), dateModified: try r.string())
+    }
+
+    /// 根据文件名扩展名推断 USB-IF MTP ObjectFormat 码。
+    public static func inferFormat(filename: String, isDirectory: Bool) -> UInt16 {
+        if isDirectory { return associationFormat }
+        let ext = (filename as NSString).pathExtension.lowercased()
+        switch ext {
+        case "jpg", "jpeg": return 0x3801
+        case "png": return 0x380B
+        case "gif": return 0x3807
+        case "bmp": return 0x3804
+        case "tif", "tiff": return 0x3802
+        case "txt", "md", "log", "json", "xml", "csv": return 0x3004
+        case "htm", "html": return 0x3005
+        case "wav": return 0x3008
+        case "mp3": return 0x3009
+        case "mp4", "m4v": return 0xB982
+        default: return 0x3000 // Undefined（Android MTP 通用接受格式）
+        }
+    }
+
+    /// 构造用于 `SendObjectInfo` 的标准 ObjectInfo 数据集。
+    public static func encodeForSend(
+        storageID: UInt32,
+        parent: UInt32,
+        filename: String,
+        size: UInt64,
+        isDirectory: Bool,
+        dateString: String = ""
+    ) -> Data {
+        var w = ByteWriter()
+        w.u32(storageID)
+        w.u16(inferFormat(filename: filename, isDirectory: isDirectory))
+        w.u16(0) // ProtectionStatus
+        w.u32(isDirectory ? 0 : UInt32(min(size, UInt64(UInt32.max))))
+        w.u16(0) // ThumbFormat
+        w.u32(0); w.u32(0); w.u32(0) // ThumbCompressedSize, ThumbPixWidth, ThumbPixHeight
+        w.u32(0); w.u32(0); w.u32(0) // ImagePixWidth, ImagePixHeight, ImageBitDepth
+        w.u32(parent)
+        w.u16(isDirectory ? 0x0001 : 0) // AssociationType: 1 = Generic Folder
+        w.u32(0) // AssociationDesc
+        w.u32(0) // SequenceNumber
+        w.string(filename)
+        w.string(dateString) // DateCreated
+        w.string(dateString) // DateModified
+        w.string("")         // Keywords
+        return w.data
     }
 }

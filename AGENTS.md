@@ -53,8 +53,10 @@ DroidDock：macOS（仅 Apple Silicon，最低 macOS 14）原生应用，用于�
 - ✅ **Kalam 是单设备单全局会话**（全局 `deviceContainer`），且全局 `lockMtp()` 在已有操作时直接返回 `ErrorMtpLockExists`，并非排队等待。因此「多设备并行」在同一个 Kalam 实例内不成立；上层的串行化必须由 `DeviceSession` 自己保证，不能依赖 Kalam。
 - ✅ `Walk` 支持 `recursive`/`skipHiddenFiles` 等参数；`DownloadFiles`/`UploadFiles` 以路径列表为单位，不是单文件句柄接口。
 - ✅ OpenMTP 宣称支持大于 4 GB 文件传输（官方 README 说明，未实测）。
-- ⚠️ macOS 的 `ptpcamerad` 会独占 MTP/PTP 接口，导致 libusb 抢占失败：有多个来源描述（含 `AppleUSBHostUserClient ... already opened for exclusive access by ptpcamerad` 日志），但**未实机验证**，规避方式留待 M0。
-- ⚠️ 自研方案的最大风险：IOUSBHost 能否在 macOS 27 上合规打开被 `ptpcamerad` 占用的 MTP 接口、是否需要额外 entitlement，均未验证，是 M0 首要任务；若无合规解，必须停下来与用户重新评估路线。
+- ✅ （2026-11-16 macOS 27.2.1 + OnePlus 13T 实机验证）手机开启文件传输后，`icdd` 会拉起当前用户的 `/usr/libexec/ptpcamerad` 独占 `IOUSBHostInterface`（`UsbExclusiveOwner`），导致 `IOUSBHostInterface` 报错 `-536870199`（`kIOReturnInternalError` / `Failed [super init]`）。实测 `.deviceSeize` 被拒、`.deviceCapture` 需受限权限（`kIOReturnNotPrivileged`）、`configure(0)` 会中断 Android `f_mtp`、`reset()` 会导致 ColorOS 退回「仅充电」。
+- ✅ （2026-11-16 决策）针对 `ptpcamerad` 独占，在非沙盒桌面端采用「热插拔抢先打开 + 遇独占错误（`kIOReturnExclusiveAccess` / `kIOReturnInternalError`）自动 `killall ptpcamerad`（仅当前用户进程，无需 `sudo`）并在 5ms 轮询重试接管」，不重置手机 USB 状态且不影响后续系统相机功能。
+- ✅ （2026-11-16 macOS 27.2.1 + OnePlus 13T 实机验证）本机若运行 `O+Connect Service` 等厂商跨屏守护进程，会在手机切入 MTP 约 1.9 秒后打开父级 `IOUSBHostDevice` 下发 AOA 切换指令（切至 `0x18d1/2d00` 后退出），导致手机退回「仅充电」；且在我方释放 `IOUSBHostDevice` 后约 1.8 秒内该服务会再次介入劫持。因此打开 `IOUSBHostInterface` 时同步以 `.deviceSeize` 持续锁定父级 `IOUSBHostDevice` 直至设备断开或应用退出，可由内核拦截后续 `IOUSBHostDevice` 打开请求（`-536870203`）从而避免 AOA 抢占。
+- ✅ （2026-11-16 实机验证）在锁护 `IOUSBHostDevice` 期间，`OnePlus PKX110` 实机成功完成 `OpenSession`、存储枚举（`65537` 内部共享存储空间 `151.8 GB / 492.2 GB`）、根目录 32 项与 `DCIM` 8 项枚举、`GetPartialObject`（`0x2001` 读取 `.nomedia` 48 字节），以及 `YYYYMMDDThhmmss` 无时区后缀日期格式确认；锁屏或「仅充电」模式下 `GetStorageIDs` 返回 0 个存储（非报错）。待补测 `DCIM/Camera` 图片原生 `GetThumb`、> 4 GB 传输与非法文件名集合。
 
 ## 5. 标记约定
 

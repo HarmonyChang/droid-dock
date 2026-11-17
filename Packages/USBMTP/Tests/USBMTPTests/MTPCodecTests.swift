@@ -53,6 +53,39 @@ final class MTPCodecTests: XCTestCase {
         XCTAssertFalse(info.isDirectory)
         XCTAssertEqual(info.dateModified, "20261116T101011")
     }
+
+    func testObjectInfoEncodeRoundTrip() throws {
+        let fileData = MTPObjectInfo.encodeForSend(
+            storageID: 0x10001,
+            parent: 42,
+            filename: "holiday_照片.jpg",
+            size: 1_048_576,
+            isDirectory: false,
+            dateString: "20261116T120000"
+        )
+        let parsedFile = try MTPObjectInfo.parse(fileData, handle: 99)
+        XCTAssertEqual(parsedFile.storageID, 0x10001)
+        XCTAssertEqual(parsedFile.parent, 42)
+        XCTAssertEqual(parsedFile.filename, "holiday_照片.jpg")
+        XCTAssertEqual(parsedFile.compressedSize, 1_048_576)
+        XCTAssertEqual(parsedFile.format, 0x3801)
+        XCTAssertFalse(parsedFile.isDirectory)
+        XCTAssertEqual(parsedFile.dateCreated, "20261116T120000")
+        XCTAssertEqual(parsedFile.dateModified, "20261116T120000")
+
+        let dirData = MTPObjectInfo.encodeForSend(
+            storageID: 0x10001,
+            parent: 0xFFFF_FFFF,
+            filename: "新建相册",
+            size: 0,
+            isDirectory: true
+        )
+        let parsedDir = try MTPObjectInfo.parse(dirData, handle: 100)
+        XCTAssertTrue(parsedDir.isDirectory)
+        XCTAssertEqual(parsedDir.format, MTPObjectInfo.associationFormat)
+        XCTAssertEqual(parsedDir.filename, "新建相册")
+        XCTAssertEqual(parsedDir.compressedSize, 0)
+    }
 }
 
 /// 脚本化传输：按顺序返回预置的字节块，验证会话的事务/分块拼装逻辑。
@@ -62,6 +95,22 @@ final class ScriptedTransport: MTPTransport, @unchecked Sendable {
     init(replies: [Data]) { self.replies = replies }
     func send(_ data: Data) async throws { sent.append(data) }
     func receive(maxLength: Int) async throws -> Data { replies.removeFirst() }
+}
+
+private final class LockedBox<T>: @unchecked Sendable {
+    private let lock = NSLock()
+    private var _value: T
+    init(_ value: T) { _value = value }
+    var value: T {
+        lock.lock()
+        defer { lock.unlock() }
+        return _value
+    }
+    func mutate(_ block: (inout T) -> Void) {
+        lock.lock()
+        defer { lock.unlock() }
+        block(&_value)
+    }
 }
 
 final class MTPSessionTests: XCTestCase {
@@ -82,5 +131,82 @@ final class MTPSessionTests: XCTestCase {
         let t = ScriptedTransport(replies: [dataBytes, Data(), resp])
         let result = try await MTPSession(transport: t).execute(MTPOperation.getStorageIDs)
         XCTAssertEqual(result.data, Data([1, 2]))
+    }
+
+    func testDownloadObjectStreamsChunks() async throws {
+        let payload = Data((0..<200).map { UInt8($0 & 0xFF) })
+        let dataBytes = MTPContainer(type: .data, code: MTPOperation.getObject, transactionID: 1, payload: payload).encoded()
+        let resp = MTPContainer(type: .response, code: MTPResponseCode.ok, transactionID: 1).encoded()
+        let t = ScriptedTransport(replies: [
+            dataBytes.prefix(20),
+            Data(),
+            Data(dataBytes.dropFirst(20).prefix(90)),
+            Data(dataBytes.dropFirst(110)),
+            resp
+        ])
+        let collected = LockedBox(Data())
+        let progressEvents = LockedBox<[UInt64]>([])
+        try await MTPSession(transport: t).downloadObject(
+            handle: 7,
+            onChunk: { chunk in collected.mutate { $0.append(chunk) } },
+            progress: { bytes in progressEvents.mutate { $0.append(bytes) } }
+        )
+        XCTAssertEqual(collected.value, payload)
+        XCTAssertEqual(progressEvents.value.last, 200)
+        XCTAssertGreaterThanOrEqual(progressEvents.value.count, 3)
+    }
+
+    func testUploadObjectCoalescesHeaderAndStreams64K() async throws {
+        // 70,000 字节 > 65,536 - 12，验证首个包恰好 65,536 字节且分两次写入
+        let fileData = Data((0..<70_000).map { UInt8($0 & 0xFF) })
+        var handlePayload = ByteWriter()
+        handlePayload.u32(0x10001)
+        handlePayload.u32(10)
+        handlePayload.u32(888)
+        let infoResp = MTPContainer(type: .response, code: MTPResponseCode.ok, transactionID: 1, payload: handlePayload.data).encoded()
+        let sendResp = MTPContainer(type: .response, code: MTPResponseCode.ok, transactionID: 2).encoded()
+        let t = ScriptedTransport(replies: [infoResp, sendResp])
+
+        let offset = LockedBox(0)
+        let progressEvents = LockedBox<[UInt64]>([])
+        let newHandle = try await MTPSession(transport: t).uploadObject(
+            storageID: 0x10001,
+            parentHandle: 10,
+            filename: "video.mp4",
+            fileSize: UInt64(fileData.count),
+            readChunk: { maxBytes in
+                var out = Data()
+                offset.mutate { cur in
+                    let end = min(fileData.count, cur + maxBytes)
+                    out = fileData.subdata(in: cur..<end)
+                    cur = end
+                }
+                return out
+            },
+            progress: { bytes in progressEvents.mutate { $0.append(bytes) } }
+        )
+        XCTAssertEqual(newHandle, 888)
+        // sent[0]=SendObjectInfo cmd, sent[1]=SendObjectInfo data, sent[2]=SendObject cmd, sent[3]=Data pkt1(65536), sent[4]=Data pkt2
+        XCTAssertEqual(t.sent.count, 5)
+        XCTAssertEqual(t.sent[3].count, 65_536)
+        XCTAssertEqual(t.sent[4].count, 70_000 - (65_536 - 12))
+        XCTAssertEqual(progressEvents.value, [UInt64(65_536 - 12), 70_000])
+    }
+
+    func testMakeDirectoryAndDeleteObject() async throws {
+        var handlePayload = ByteWriter()
+        handlePayload.u32(0x10001); handlePayload.u32(0xFFFF_FFFF); handlePayload.u32(555)
+        let mkResp = MTPContainer(type: .response, code: MTPResponseCode.ok, transactionID: 1, payload: handlePayload.data).encoded()
+        let delResp = MTPContainer(type: .response, code: MTPResponseCode.ok, transactionID: 2).encoded()
+        let t = ScriptedTransport(replies: [mkResp, delResp])
+        let session = MTPSession(transport: t)
+        let created = try await session.makeDirectory(storageID: 0x10001, parentHandle: 0xFFFF_FFFF, name: "NewDir")
+        XCTAssertEqual(created, 555)
+        try await session.deleteObject(handle: 555)
+        XCTAssertEqual(t.sent.count, 3)
+        let infoData = try MTPContainer.decode(t.sent[1]).payload
+        let parsed = try MTPObjectInfo.parse(infoData, handle: 0)
+        XCTAssertTrue(parsed.isDirectory)
+        XCTAssertEqual(parsed.filename, "NewDir")
     }
 }

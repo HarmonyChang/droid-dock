@@ -1,0 +1,557 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 56;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		A10000010000000000000001 /* DroidDockApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000010000000000000001 /* DroidDockApp.swift */; };
+		A10000020000000000000002 /* AppState.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000020000000000000002 /* AppState.swift */; };
+		A10000030000000000000003 /* BrowserModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000030000000000000003 /* BrowserModel.swift */; };
+		A10000040000000000000004 /* Theme.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000040000000000000004 /* Theme.swift */; };
+		A10000050000000000000005 /* SidebarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000050000000000000005 /* SidebarView.swift */; };
+		A10000060000000000000006 /* BrowserToolbarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000060000000000000006 /* BrowserToolbarView.swift */; };
+		A10000070000000000000007 /* BrowserContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000070000000000000007 /* BrowserContentView.swift */; };
+		A10000080000000000000008 /* MainWindowView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000080000000000000008 /* MainWindowView.swift */; };
+		A10000090000000000000009 /* FileProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000090000000000000009 /* FileProvider.swift */; };
+		A100000A000000000000000A /* DeviceSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = B100000A000000000000000A /* DeviceSession.swift */; };
+		A100000B000000000000000B /* DeviceManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = B100000B000000000000000B /* DeviceManager.swift */; };
+		A100000C000000000000000C /* MTPProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = B100000C000000000000000C /* MTPProvider.swift */; };
+		A100000D000000000000000D /* Logger.swift in Sources */ = {isa = PBXBuildFile; fileRef = B100000D000000000000000D /* Logger.swift */; };
+		A100000E000000000000000E /* Errors.swift in Sources */ = {isa = PBXBuildFile; fileRef = B100000E000000000000000E /* Errors.swift */; };
+		A100000F000000000000000F /* PathUtils.swift in Sources */ = {isa = PBXBuildFile; fileRef = B100000F000000000000000F /* PathUtils.swift */; };
+		A10000100000000000000010 /* USBMTP in Frameworks */ = {isa = PBXBuildFile; productRef = E10000010000000000000001 /* USBMTP */; };
+		A10000110000000000000011 /* FakeFileProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000100000000000000010 /* FakeFileProvider.swift */; };
+		A10000120000000000000012 /* BrowserAndDeviceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000110000000000000011 /* BrowserAndDeviceTests.swift */; };
+		A10000130000000000000013 /* TransferQueue.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000120000000000000012 /* TransferQueue.swift */; };
+		A10000140000000000000014 /* TransferModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000130000000000000013 /* TransferModel.swift */; };
+		A10000150000000000000015 /* TransferTrayView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000140000000000000014 /* TransferTrayView.swift */; };
+		A10000160000000000000016 /* TransferTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000150000000000000015 /* TransferTests.swift */; };
+		A10000170000000000000017 /* MediaIndexStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000160000000000000016 /* MediaIndexStore.swift */; };
+		A10000180000000000000018 /* ThumbnailPipeline.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000170000000000000017 /* ThumbnailPipeline.swift */; };
+		A10000190000000000000019 /* PhotoPreviewView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000180000000000000018 /* PhotoPreviewView.swift */; };
+		A100001A000000000000001A /* MediaAndThumbnailTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000190000000000000019 /* MediaAndThumbnailTests.swift */; };
+		A100001B000000000000001B /* BrandLogoView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B100001A000000000000001A /* BrandLogoView.swift */; };
+		A100001C000000000000001C /* DiagnosticsService.swift in Sources */ = {isa = PBXBuildFile; fileRef = B100001B000000000000001B /* DiagnosticsService.swift */; };
+		A100001D000000000000001D /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = B100001C000000000000001C /* Assets.xcassets */; };
+		A100001E000000000000001E /* ADBClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = B100001D000000000000001D /* ADBClient.swift */; };
+		A100001F000000000000001F /* ADBDiscoveryService.swift in Sources */ = {isa = PBXBuildFile; fileRef = B100001E000000000000001E /* ADBDiscoveryService.swift */; };
+		A10000200000000000000020 /* ADBProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = B100001F000000000000001F /* ADBProvider.swift */; };
+		A10000210000000000000021 /* WirelessPairingSheetView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000200000000000000020 /* WirelessPairingSheetView.swift */; };
+		A10000220000000000000022 /* QuickDropWebServer.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000210000000000000021 /* QuickDropWebServer.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		C10000010000000000000001 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = D10000010000000000000001 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = F10000010000000000000001;
+			remoteInfo = DroidDock;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXFileReference section */
+		B10000010000000000000001 /* DroidDockApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DroidDockApp.swift; sourceTree = "<group>"; };
+		B10000020000000000000002 /* AppState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppState.swift; sourceTree = "<group>"; };
+		B10000030000000000000003 /* BrowserModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrowserModel.swift; sourceTree = "<group>"; };
+		B10000040000000000000004 /* Theme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Theme.swift; sourceTree = "<group>"; };
+		B10000050000000000000005 /* SidebarView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SidebarView.swift; sourceTree = "<group>"; };
+		B10000060000000000000006 /* BrowserToolbarView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrowserToolbarView.swift; sourceTree = "<group>"; };
+		B10000070000000000000007 /* BrowserContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrowserContentView.swift; sourceTree = "<group>"; };
+		B10000080000000000000008 /* MainWindowView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MainWindowView.swift; sourceTree = "<group>"; };
+		B10000090000000000000009 /* FileProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileProvider.swift; sourceTree = "<group>"; };
+		B100000A000000000000000A /* DeviceSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeviceSession.swift; sourceTree = "<group>"; };
+		B100000B000000000000000B /* DeviceManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeviceManager.swift; sourceTree = "<group>"; };
+		B100000C000000000000000C /* MTPProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MTPProvider.swift; sourceTree = "<group>"; };
+		B100000D000000000000000D /* Logger.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Logger.swift; sourceTree = "<group>"; };
+		B100000E000000000000000E /* Errors.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Errors.swift; sourceTree = "<group>"; };
+		B100000F000000000000000F /* PathUtils.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PathUtils.swift; sourceTree = "<group>"; };
+		B10000100000000000000010 /* FakeFileProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FakeFileProvider.swift; sourceTree = "<group>"; };
+		B10000110000000000000011 /* BrowserAndDeviceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrowserAndDeviceTests.swift; sourceTree = "<group>"; };
+		B10000120000000000000012 /* TransferQueue.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TransferQueue.swift; sourceTree = "<group>"; };
+		B10000130000000000000013 /* TransferModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TransferModel.swift; sourceTree = "<group>"; };
+		B10000140000000000000014 /* TransferTrayView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TransferTrayView.swift; sourceTree = "<group>"; };
+		B10000150000000000000015 /* TransferTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TransferTests.swift; sourceTree = "<group>"; };
+		B10000160000000000000016 /* MediaIndexStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MediaIndexStore.swift; sourceTree = "<group>"; };
+		B10000170000000000000017 /* ThumbnailPipeline.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ThumbnailPipeline.swift; sourceTree = "<group>"; };
+		B10000180000000000000018 /* PhotoPreviewView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhotoPreviewView.swift; sourceTree = "<group>"; };
+		B10000190000000000000019 /* MediaAndThumbnailTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MediaAndThumbnailTests.swift; sourceTree = "<group>"; };
+		B100001A000000000000001A /* BrandLogoView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrandLogoView.swift; sourceTree = "<group>"; };
+		B100001B000000000000001B /* DiagnosticsService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiagnosticsService.swift; sourceTree = "<group>"; };
+		B100001C000000000000001C /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		B100001D000000000000001D /* ADBClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ADBClient.swift; sourceTree = "<group>"; };
+		B100001E000000000000001E /* ADBDiscoveryService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ADBDiscoveryService.swift; sourceTree = "<group>"; };
+		B100001F000000000000001F /* ADBProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ADBProvider.swift; sourceTree = "<group>"; };
+		B10000200000000000000020 /* WirelessPairingSheetView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WirelessPairingSheetView.swift; sourceTree = "<group>"; };
+		B10000210000000000000021 /* QuickDropWebServer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QuickDropWebServer.swift; sourceTree = "<group>"; };
+		B20000010000000000000001 /* DroidDock.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = DroidDock.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		B20000020000000000000002 /* DroidDockTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = DroidDockTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		F20000010000000000000001 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A10000100000000000000010 /* USBMTP in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		F20000020000000000000002 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		G10000010000000000000001 = {
+			isa = PBXGroup;
+			children = (
+				G10000020000000000000002 /* DroidDock */,
+				G10000090000000000000009 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		G10000020000000000000002 /* DroidDock */ = {
+			isa = PBXGroup;
+			children = (
+				G10000030000000000000003 /* App */,
+				G10000040000000000000004 /* UI */,
+				G10000050000000000000005 /* Device */,
+				G100000A000000000000000A /* Services */,
+				G10000070000000000000007 /* Support */,
+				G100000B000000000000000B /* Resources */,
+				G10000080000000000000008 /* Tests */,
+			);
+			path = DroidDock;
+			sourceTree = "<group>";
+		};
+		G10000030000000000000003 /* App */ = {
+			isa = PBXGroup;
+			children = (
+				B10000010000000000000001 /* DroidDockApp.swift */,
+				B10000020000000000000002 /* AppState.swift */,
+				B10000030000000000000003 /* BrowserModel.swift */,
+				B10000130000000000000013 /* TransferModel.swift */,
+			);
+			path = App;
+			sourceTree = "<group>";
+		};
+		G10000040000000000000004 /* UI */ = {
+			isa = PBXGroup;
+			children = (
+				B10000040000000000000004 /* Theme.swift */,
+				B10000050000000000000005 /* SidebarView.swift */,
+				B10000060000000000000006 /* BrowserToolbarView.swift */,
+				B10000070000000000000007 /* BrowserContentView.swift */,
+				B10000080000000000000008 /* MainWindowView.swift */,
+				B10000140000000000000014 /* TransferTrayView.swift */,
+				B10000180000000000000018 /* PhotoPreviewView.swift */,
+				B100001A000000000000001A /* BrandLogoView.swift */,
+				B10000200000000000000020 /* WirelessPairingSheetView.swift */,
+			);
+			path = UI;
+			sourceTree = "<group>";
+		};
+		G10000050000000000000005 /* Device */ = {
+			isa = PBXGroup;
+			children = (
+				B10000090000000000000009 /* FileProvider.swift */,
+				B100000A000000000000000A /* DeviceSession.swift */,
+				B100000B000000000000000B /* DeviceManager.swift */,
+				G10000060000000000000006 /* MTP */,
+				G100000C000000000000000C /* ADB */,
+			);
+			path = Device;
+			sourceTree = "<group>";
+		};
+		G10000060000000000000006 /* MTP */ = {
+			isa = PBXGroup;
+			children = (
+				B100000C000000000000000C /* MTPProvider.swift */,
+			);
+			path = MTP;
+			sourceTree = "<group>";
+		};
+		G100000C000000000000000C /* ADB */ = {
+			isa = PBXGroup;
+			children = (
+				B100001D000000000000001D /* ADBClient.swift */,
+				B100001E000000000000001E /* ADBDiscoveryService.swift */,
+				B100001F000000000000001F /* ADBProvider.swift */,
+			);
+			path = ADB;
+			sourceTree = "<group>";
+		};
+		G10000070000000000000007 /* Support */ = {
+			isa = PBXGroup;
+			children = (
+				B100000D000000000000000D /* Logger.swift */,
+				B100000E000000000000000E /* Errors.swift */,
+				B100000F000000000000000F /* PathUtils.swift */,
+				B100001B000000000000001B /* DiagnosticsService.swift */,
+			);
+			path = Support;
+			sourceTree = "<group>";
+		};
+		G100000B000000000000000B /* Resources */ = {
+			isa = PBXGroup;
+			children = (
+				B100001C000000000000001C /* Assets.xcassets */,
+			);
+			path = Resources;
+			sourceTree = "<group>";
+		};
+		G10000080000000000000008 /* Tests */ = {
+			isa = PBXGroup;
+			children = (
+				B10000100000000000000010 /* FakeFileProvider.swift */,
+				B10000110000000000000011 /* BrowserAndDeviceTests.swift */,
+				B10000150000000000000015 /* TransferTests.swift */,
+				B10000190000000000000019 /* MediaAndThumbnailTests.swift */,
+			);
+			path = Tests;
+			sourceTree = "<group>";
+		};
+		G100000A000000000000000A /* Services */ = {
+			isa = PBXGroup;
+			children = (
+				B10000120000000000000012 /* TransferQueue.swift */,
+				B10000160000000000000016 /* MediaIndexStore.swift */,
+				B10000170000000000000017 /* ThumbnailPipeline.swift */,
+				B10000210000000000000021 /* QuickDropWebServer.swift */,
+			);
+			path = Services;
+			sourceTree = "<group>";
+		};
+		G10000090000000000000009 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				B20000010000000000000001 /* DroidDock.app */,
+				B20000020000000000000002 /* DroidDockTests.xctest */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		F10000010000000000000001 /* DroidDock */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = C20000020000000000000002 /* Build configuration list for PBXNativeTarget "DroidDock" */;
+			buildPhases = (
+				F30000010000000000000001 /* Sources */,
+				F20000010000000000000001 /* Frameworks */,
+				F40000010000000000000001 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = DroidDock;
+			packageProductDependencies = (
+				E10000010000000000000001 /* USBMTP */,
+			);
+			productName = DroidDock;
+			productReference = B20000010000000000000001 /* DroidDock.app */;
+			productType = "com.apple.product-type.application";
+		};
+		F10000020000000000000002 /* DroidDockTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = C20000030000000000000003 /* Build configuration list for PBXNativeTarget "DroidDockTests" */;
+			buildPhases = (
+				F30000020000000000000002 /* Sources */,
+				F20000020000000000000002 /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				C30000010000000000000001 /* PBXTargetDependency */,
+			);
+			name = DroidDockTests;
+			productName = DroidDockTests;
+			productReference = B20000020000000000000002 /* DroidDockTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		D10000010000000000000001 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastSwiftUpdateCheck = 2720;
+				LastUpgradeCheck = 2720;
+			};
+			buildConfigurationList = C20000010000000000000001 /* Build configuration list for PBXProject "DroidDock" */;
+			compatibilityVersion = "Xcode 14.0";
+			developmentRegion = zh_CN;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				"zh-Hans",
+				Base,
+			);
+			mainGroup = G10000010000000000000001;
+			packageReferences = (
+				E20000010000000000000001 /* XCLocalSwiftPackageReference "Packages/USBMTP" */,
+			);
+			productRefGroup = G10000090000000000000009 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				F10000010000000000000001 /* DroidDock */,
+				F10000020000000000000002 /* DroidDockTests */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		F40000010000000000000001 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A100001D000000000000001D /* Assets.xcassets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		F30000010000000000000001 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A10000010000000000000001 /* DroidDockApp.swift in Sources */,
+				A10000020000000000000002 /* AppState.swift in Sources */,
+				A10000030000000000000003 /* BrowserModel.swift in Sources */,
+				A10000040000000000000004 /* Theme.swift in Sources */,
+				A10000050000000000000005 /* SidebarView.swift in Sources */,
+				A10000060000000000000006 /* BrowserToolbarView.swift in Sources */,
+				A10000070000000000000007 /* BrowserContentView.swift in Sources */,
+				A10000080000000000000008 /* MainWindowView.swift in Sources */,
+				A10000090000000000000009 /* FileProvider.swift in Sources */,
+				A100000A000000000000000A /* DeviceSession.swift in Sources */,
+				A100000B000000000000000B /* DeviceManager.swift in Sources */,
+				A100000C000000000000000C /* MTPProvider.swift in Sources */,
+				A100000D000000000000000D /* Logger.swift in Sources */,
+				A100000E000000000000000E /* Errors.swift in Sources */,
+				A100000F000000000000000F /* PathUtils.swift in Sources */,
+				A10000130000000000000013 /* TransferQueue.swift in Sources */,
+				A10000140000000000000014 /* TransferModel.swift in Sources */,
+				A10000150000000000000015 /* TransferTrayView.swift in Sources */,
+				A10000170000000000000017 /* MediaIndexStore.swift in Sources */,
+				A10000180000000000000018 /* ThumbnailPipeline.swift in Sources */,
+				A10000190000000000000019 /* PhotoPreviewView.swift in Sources */,
+				A100001B000000000000001B /* BrandLogoView.swift in Sources */,
+				A100001C000000000000001C /* DiagnosticsService.swift in Sources */,
+				A100001E000000000000001E /* ADBClient.swift in Sources */,
+				A100001F000000000000001F /* ADBDiscoveryService.swift in Sources */,
+				A10000200000000000000020 /* ADBProvider.swift in Sources */,
+				A10000210000000000000021 /* WirelessPairingSheetView.swift in Sources */,
+				A10000220000000000000022 /* QuickDropWebServer.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		F30000020000000000000002 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A10000110000000000000011 /* FakeFileProvider.swift in Sources */,
+				A10000120000000000000012 /* BrowserAndDeviceTests.swift in Sources */,
+				A10000160000000000000016 /* TransferTests.swift in Sources */,
+				A100001A000000000000001A /* MediaAndThumbnailTests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		C30000010000000000000001 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = F10000010000000000000001 /* DroidDock */;
+			targetProxy = C10000010000000000000001 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin XCBuildConfiguration section */
+		C40000010000000000000001 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ARCHS = arm64;
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				ONLY_ACTIVE_ARCH = YES;
+				SDKROOT = macosx;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_STRICT_CONCURRENCY = complete;
+				SWIFT_VERSION = 6.0;
+			};
+			name = Debug;
+		};
+		C40000020000000000000002 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ARCHS = arm64;
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				SDKROOT = macosx;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_STRICT_CONCURRENCY = complete;
+				SWIFT_VERSION = 6.0;
+			};
+			name = Release;
+		};
+		C40000030000000000000003 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_IDENTITY = "-";
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 1;
+				ENABLE_APP_SANDBOX = NO;
+				ENABLE_HARDENED_RUNTIME = NO;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = DroidDock;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.utilities";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MARKETING_VERSION = 0.1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.droiddock.app;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+			};
+			name = Debug;
+		};
+		C40000040000000000000004 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_IDENTITY = "-";
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 1;
+				ENABLE_APP_SANDBOX = NO;
+				ENABLE_HARDENED_RUNTIME = NO;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = DroidDock;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.utilities";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MARKETING_VERSION = 0.1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.droiddock.app;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+			};
+			name = Release;
+		};
+		C40000050000000000000005 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_IDENTITY = "-";
+				CODE_SIGN_STYLE = Automatic;
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@loader_path/../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.droiddock.tests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/DroidDock.app/Contents/MacOS/DroidDock";
+			};
+			name = Debug;
+		};
+		C40000060000000000000006 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_IDENTITY = "-";
+				CODE_SIGN_STYLE = Automatic;
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@loader_path/../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.droiddock.tests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/DroidDock.app/Contents/MacOS/DroidDock";
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		C20000010000000000000001 /* Build configuration list for PBXProject "DroidDock" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				C40000010000000000000001 /* Debug */,
+				C40000020000000000000002 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		C20000020000000000000002 /* Build configuration list for PBXNativeTarget "DroidDock" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				C40000030000000000000003 /* Debug */,
+				C40000040000000000000004 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		C20000030000000000000003 /* Build configuration list for PBXNativeTarget "DroidDockTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				C40000050000000000000005 /* Debug */,
+				C40000060000000000000006 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+
+/* Begin XCLocalSwiftPackageReference section */
+		E20000010000000000000001 /* XCLocalSwiftPackageReference "Packages/USBMTP" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = Packages/USBMTP;
+		};
+/* End XCLocalSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		E10000010000000000000001 /* USBMTP */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = E20000010000000000000001 /* XCLocalSwiftPackageReference "Packages/USBMTP" */;
+			productName = USBMTP;
+		};
+/* End XCSwiftPackageProductDependency section */
+	};
+	rootObject = D10000010000000000000001 /* Project object */;
+}
