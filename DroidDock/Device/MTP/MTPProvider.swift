@@ -1,4 +1,5 @@
 import Foundation
+import ImageIO
 import USBMTP
 
 /// 基于 `USBMTP` 的 MTP 设备文件提供方；单设备所有操作由上层 `DeviceSession` 串行调用。
@@ -6,6 +7,7 @@ actor MTPFileProvider: FileProvider {
     private let session: MTPSession
     private var dirHandleCache: [UInt32: [String: UInt32]] = [:]
     private var nodeHandleCache: [String: UInt32] = [:]
+    private var objectInfoCache: [UInt32: [UInt32: MTPObjectInfo]] = [:]
 
     init(session: MTPSession) {
         self.session = session
@@ -39,7 +41,8 @@ actor MTPFileProvider: FileProvider {
             var nodes: [RemoteNode] = []
             nodes.reserveCapacity(handles.count)
             for handle in handles {
-                let info = try await session.objectInfo(handle: handle)
+                try Task.checkCancellation()
+                let info = try await cachedOrFetchObjectInfo(storage: storage, handle: handle)
                 let node = makeNode(from: info, storage: storage, parentDir: normalizedDir)
                 guard !info.filename.hasPrefix(".") else { continue }
                 nodes.append(node)
@@ -125,7 +128,8 @@ actor MTPFileProvider: FileProvider {
             var mediaNodes: [RemoteNode] = []
             var seenIDs: Set<String> = []
             for item in selectedHandles {
-                let info = try await session.objectInfo(handle: item.handle)
+                try Task.checkCancellation()
+                let info = try await cachedOrFetchObjectInfo(storage: storage, handle: item.handle)
                 guard !info.isDirectory, !info.filename.hasPrefix(".") else { continue }
                 let node = makeNode(from: info, storage: storage, parentDir: item.dirPath)
                 guard node.kind == .photo || node.kind == .video else { continue }
@@ -142,6 +146,8 @@ actor MTPFileProvider: FileProvider {
                 }
                 return lhs.name.localizedStandardCompare(rhs.name) == .orderedDescending
             }
+        } catch let error as CancellationError {
+            throw error
         } catch {
             throw Self.mapError(error)
         }
@@ -149,18 +155,71 @@ actor MTPFileProvider: FileProvider {
 
     func thumbnail(for node: RemoteNode) async throws -> Data? {
         do {
-            let handle: UInt32
+            try Task.checkCancellation()
+            let objectHandle: UInt32
             if let cached = nodeHandleCache[node.id] {
-                handle = cached
+                objectHandle = cached
             } else if let suffix = node.id.split(separator: ":").last, let parsed = UInt32(suffix) {
-                handle = parsed
+                objectHandle = parsed
             } else {
                 return nil
             }
-            return try await session.thumbnail(handle: handle)
+            if let native = try await session.thumbnail(handle: objectHandle), !native.isEmpty {
+                return native
+            }
+            // 对无原生 GetThumb 的照片先读取前 128 KB 提取内嵌 EXIF 缩略图，避免逐张下载原图拖慢网格滑动
+            if node.kind == .photo, node.size > 0 {
+                let headBytes = UInt32(min(node.size, 131_072))
+                if let partial = try? await session.partialObject(handle: objectHandle, offset: 0, maxBytes: headBytes),
+                   !partial.isEmpty {
+                    if UInt64(partial.count) >= node.size {
+                        return partial
+                    }
+                    if let exifThumb = Self.extractEmbeddedEXIFThumbnail(from: partial, maxPixelSize: 320) {
+                        return exifThumb
+                    }
+                }
+            }
+            return nil
+        } catch let error as CancellationError {
+            throw error
         } catch {
             throw Self.mapError(error)
         }
+    }
+
+    private nonisolated static func extractEmbeddedEXIFThumbnail(from partialData: Data, maxPixelSize: Int) -> Data? {
+        guard let source = CGImageSourceCreateWithData(partialData as CFData, nil) else {
+            return nil
+        }
+        let options: [CFString: Any] = [
+            kCGImageSourceThumbnailMaxPixelSize: maxPixelSize,
+            kCGImageSourceCreateThumbnailFromImageAlways: false,
+            kCGImageSourceCreateThumbnailFromImageIfAbsent: false,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+        ]
+        guard let cgImage = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary) else {
+            return nil
+        }
+        let out = NSMutableData()
+        guard let dest = CGImageDestinationCreateWithData(out as CFMutableData, "public.jpeg" as CFString, 1, nil) else {
+            return nil
+        }
+        let destOpts: [CFString: Any] = [kCGImageDestinationLossyCompressionQuality: 0.85]
+        CGImageDestinationAddImage(dest, cgImage, destOpts as CFDictionary)
+        guard CGImageDestinationFinalize(dest) else {
+            return nil
+        }
+        return out as Data
+    }
+
+    private func cachedOrFetchObjectInfo(storage: UInt32, handle: UInt32) async throws -> MTPObjectInfo {
+        if let cached = objectInfoCache[storage]?[handle] {
+            return cached
+        }
+        let fetched = try await session.objectInfo(handle: handle)
+        objectInfoCache[storage, default: [:]][handle] = fetched
+        return fetched
     }
 
     private func handle(for node: RemoteNode) throws -> UInt32 {
@@ -273,6 +332,7 @@ actor MTPFileProvider: FileProvider {
         do {
             try await session.deleteObject(handle: objectHandle)
             nodeHandleCache.removeValue(forKey: node.id)
+            objectInfoCache[node.storageID]?.removeValue(forKey: objectHandle)
             if node.isDirectory {
                 let prefix = node.path == "/" ? "/" : node.path + "/"
                 if var map = dirHandleCache[node.storageID] {
@@ -339,7 +399,8 @@ actor MTPFileProvider: FileProvider {
             let handles = try await session.objectHandles(storage: storage, parent: currentHandle)
             var matched: UInt32?
             for handle in handles {
-                let info = try await session.objectInfo(handle: handle)
+                try Task.checkCancellation()
+                let info = try await cachedOrFetchObjectInfo(storage: storage, handle: handle)
                 _ = makeNode(from: info, storage: storage, parentDir: parentPath)
                 if info.isDirectory && info.filename == segment {
                     matched = info.handle

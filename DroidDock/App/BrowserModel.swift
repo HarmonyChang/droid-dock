@@ -1,5 +1,211 @@
+import AppKit
 import Foundation
+import ImageIO
 import Observation
+
+/// 照片详细信息与 EXIF 拍摄参数摘要（用于查看器右上角浮窗展示）。
+struct PhotoMetadata: Sendable, Equatable {
+    let pixelWidth: Int?
+    let pixelHeight: Int?
+    let fileSizeBytes: UInt64
+    let formatName: String
+    let cameraModel: String?
+    let lensModel: String?
+    let focalLengthText: String?
+    let apertureText: String?
+    let shutterSpeedText: String?
+    let isoText: String?
+    let exposureBiasText: String?
+    let capturedAt: Date?
+    let colorProfileName: String?
+    let gpsText: String?
+    let isOriginalLoaded: Bool
+
+    var dimensionsText: String? {
+        guard let pixelWidth, let pixelHeight, pixelWidth > 0, pixelHeight > 0 else {
+            return nil
+        }
+        return "\(pixelWidth) × \(pixelHeight)"
+    }
+
+    var megapixelsText: String? {
+        guard let pixelWidth, let pixelHeight, pixelWidth > 0, pixelHeight > 0 else {
+            return nil
+        }
+        let mp = Double(pixelWidth * pixelHeight) / 1_000_000.0
+        if mp >= 0.1 {
+            return String(format: "%.1f MP", mp)
+        }
+        return "\(max(1, (pixelWidth * pixelHeight) / 1000)) KP"
+    }
+
+    var exposureTags: [String] {
+        [focalLengthText, apertureText, shutterSpeedText, isoText, exposureBiasText].compactMap { $0 }
+    }
+
+    static func initial(from node: RemoteNode) -> PhotoMetadata {
+        PhotoMetadata(
+            pixelWidth: nil,
+            pixelHeight: nil,
+            fileSizeBytes: node.size,
+            formatName: inferredFormatName(for: node.name),
+            cameraModel: nil,
+            lensModel: nil,
+            focalLengthText: nil,
+            apertureText: nil,
+            shutterSpeedText: nil,
+            isoText: nil,
+            exposureBiasText: nil,
+            capturedAt: node.modified,
+            colorProfileName: nil,
+            gpsText: nil,
+            isOriginalLoaded: false
+        )
+    }
+
+    static func extract(from url: URL, node: RemoteNode, isOriginal: Bool) -> PhotoMetadata {
+        guard let source = CGImageSourceCreateWithURL(url as CFURL, nil) else {
+            return initial(from: node)
+        }
+        return extract(from: source, node: node, isOriginal: isOriginal)
+    }
+
+    static func extract(from source: CGImageSource, node: RemoteNode, isOriginal: Bool) -> PhotoMetadata {
+        let props = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any] ?? [:]
+        let tiff = props[kCGImagePropertyTIFFDictionary] as? [CFString: Any]
+        let exif = props[kCGImagePropertyExifDictionary] as? [CFString: Any]
+        let gps = props[kCGImagePropertyGPSDictionary] as? [CFString: Any]
+
+        var width = (props[kCGImagePropertyPixelWidth] as? NSNumber)?.intValue
+        var height = (props[kCGImagePropertyPixelHeight] as? NSNumber)?.intValue
+        let orientation = (props[kCGImagePropertyOrientation] as? NSNumber)?.intValue
+            ?? (tiff?[kCGImagePropertyTIFFOrientation] as? NSNumber)?.intValue
+            ?? 1
+        // EXIF 方向 5–8 表示横竖屏旋转 90°/270°，需交换传感器宽高得到真实视觉尺寸
+        if [5, 6, 7, 8].contains(orientation), let w = width, let h = height {
+            width = h
+            height = w
+        }
+
+        let make = (tiff?[kCGImagePropertyTIFFMake] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let model = (tiff?[kCGImagePropertyTIFFModel] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let cameraModel: String?
+        if let model, !model.isEmpty {
+            if let make, !make.isEmpty, !model.localizedCaseInsensitiveContains(make) {
+                cameraModel = "\(make) \(model)"
+            } else {
+                cameraModel = model
+            }
+        } else if let make, !make.isEmpty {
+            cameraModel = make
+        } else {
+            cameraModel = nil
+        }
+
+        let lensModel = (exif?[kCGImagePropertyExifLensModel] as? String)?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .nilIfEmpty
+
+        let focal35 = (exif?[kCGImagePropertyExifFocalLenIn35mmFilm] as? NSNumber)?.doubleValue
+        let focalRaw = (exif?[kCGImagePropertyExifFocalLength] as? NSNumber)?.doubleValue
+        let focalLengthText: String? = (focal35 ?? focalRaw).flatMap { val in
+            guard val > 0 else { return nil }
+            if focal35 != nil || abs(val - val.rounded()) < 0.05 {
+                return "\(Int(val.rounded())) mm"
+            }
+            return String(format: "%.1f mm", val)
+        }
+
+        let apertureText: String?
+        if let f = (exif?[kCGImagePropertyExifFNumber] as? NSNumber)?.doubleValue, f > 0 {
+            apertureText = abs(f - f.rounded()) < 0.05 ? String(format: "f/%.0f", f) : String(format: "f/%.1f", f)
+        } else {
+            apertureText = nil
+        }
+
+        let shutterSpeedText: String?
+        if let t = (exif?[kCGImagePropertyExifExposureTime] as? NSNumber)?.doubleValue, t > 0 {
+            if t >= 1.0 {
+                let raw = String(format: "%.1f", t)
+                shutterSpeedText = (raw.hasSuffix(".0") ? String(raw.dropLast(2)) : raw) + " s"
+            } else {
+                let denom = max(1, Int((1.0 / t).rounded()))
+                shutterSpeedText = "1/\(denom) s"
+            }
+        } else {
+            shutterSpeedText = nil
+        }
+
+        let isoText: String?
+        if let n = (exif?[kCGImagePropertyExifISOSpeedRatings] as? [NSNumber])?.first, n.intValue > 0 {
+            isoText = "ISO \(n.intValue)"
+        } else {
+            isoText = nil
+        }
+
+        let exposureBiasText: String?
+        if let bias = (exif?[kCGImagePropertyExifExposureBiasValue] as? NSNumber)?.doubleValue {
+            exposureBiasText = abs(bias) < 0.05 ? "0 EV" : String(format: "%+.1f EV", bias)
+        } else {
+            exposureBiasText = nil
+        }
+
+        let dateStr = (exif?[kCGImagePropertyExifDateTimeOriginal] as? String)
+            ?? (exif?[kCGImagePropertyExifDateTimeDigitized] as? String)
+            ?? (tiff?[kCGImagePropertyTIFFDateTime] as? String)
+        let capturedAt = dateStr.flatMap(parseEXIFDate) ?? node.modified
+
+        let colorProfileName = (props[kCGImagePropertyProfileName] as? String)?.nilIfEmpty
+            ?? (props[kCGImagePropertyColorModel] as? String)?.nilIfEmpty
+
+        let gpsText: String?
+        if let lat = (gps?[kCGImagePropertyGPSLatitude] as? NSNumber)?.doubleValue,
+           let lon = (gps?[kCGImagePropertyGPSLongitude] as? NSNumber)?.doubleValue {
+            let latRef = (gps?[kCGImagePropertyGPSLatitudeRef] as? String) ?? (lat >= 0 ? "N" : "S")
+            let lonRef = (gps?[kCGImagePropertyGPSLongitudeRef] as? String) ?? (lon >= 0 ? "E" : "W")
+            gpsText = String(format: "%.4f° %@, %.4f° %@", abs(lat), latRef, abs(lon), lonRef)
+        } else {
+            gpsText = nil
+        }
+
+        return PhotoMetadata(
+            pixelWidth: width,
+            pixelHeight: height,
+            fileSizeBytes: node.size,
+            formatName: inferredFormatName(for: node.name),
+            cameraModel: cameraModel,
+            lensModel: lensModel,
+            focalLengthText: focalLengthText,
+            apertureText: apertureText,
+            shutterSpeedText: shutterSpeedText,
+            isoText: isoText,
+            exposureBiasText: exposureBiasText,
+            capturedAt: capturedAt,
+            colorProfileName: colorProfileName,
+            gpsText: gpsText,
+            isOriginalLoaded: isOriginal
+        )
+    }
+
+    private static func inferredFormatName(for filename: String) -> String {
+        let ext = (filename as NSString).pathExtension.uppercased()
+        if ext == "JPG" { return "JPEG" }
+        return ext.isEmpty ? "图片" : ext
+    }
+
+    private static func parseEXIFDate(_ raw: String) -> Date? {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "yyyy:MM:dd HH:mm:ss"
+        return formatter.date(from: raw.trimmingCharacters(in: .whitespacesAndNewlines))
+    }
+}
+
+private extension String {
+    var nilIfEmpty: String? {
+        isEmpty ? nil : self
+    }
+}
 
 enum SidebarSection: String, CaseIterable, Identifiable, Sendable {
     case photos
@@ -123,9 +329,13 @@ final class BrowserModel {
 
     private(set) var previewingNode: RemoteNode?
     private(set) var previewLocalURL: URL?
+    private(set) var previewFullImage: NSImage?
+    private(set) var previewMetadata: PhotoMetadata?
+    private(set) var previewProgress: Double = 0
     private(set) var isLoadingPreview: Bool = false
     private(set) var previewError: String?
     private var previewLoadTask: Task<Void, Never>?
+    private var previewPrefetchTask: Task<Void, Never>?
     private var lockedRetryTask: Task<Void, Never>?
 
     private let mediaIndexStore: MediaIndexStore
@@ -408,20 +618,45 @@ final class BrowserModel {
         await navigate(to: node.path)
     }
 
-    /// 打开图片内建缩放查看器，或为视频/文档下载缓存后唤起系统 Quick Look。
+    /// 打开图片内建缩放查看器（抢占设备带宽优先读取高清原图并解析 EXIF），或为视频/文档下载缓存后唤起系统 Quick Look。
     func openPreview(for node: RemoteNode) async {
         guard !node.isDirectory, let session = activeSession else { return }
         let devID = activeDeviceID?.rawValue ?? "default"
         previewLoadTask?.cancel()
+        previewPrefetchTask?.cancel()
+        previewPrefetchTask = nil
         previewError = nil
+        previewProgress = 0
 
         if node.kind == .photo {
             selectedNodeIDs = [node.id]
             previewingNode = node
+            previewFullImage = nil
+            previewMetadata = PhotoMetadata.initial(from: node)
+
             let cacheURL = previewCacheURL(for: node, deviceID: devID)
             if FileManager.default.fileExists(atPath: cacheURL.path) {
                 previewLocalURL = cacheURL
-                isLoadingPreview = false
+                isLoadingPreview = true
+                let task = Task { @MainActor [weak self] in
+                    guard let self else { return }
+                    defer {
+                        if self.previewingNode?.id == node.id {
+                            self.isLoadingPreview = false
+                        }
+                    }
+                    let decoded = await Self.decodeHighResImageAndMetadata(from: cacheURL, node: node)
+                    guard !Task.isCancelled, self.previewingNode?.id == node.id else { return }
+                    if let image = decoded.image {
+                        self.previewFullImage = image
+                        self.previewMetadata = decoded.metadata
+                    } else {
+                        self.previewError = "无法解析本地缓存图片"
+                    }
+                    self.scheduleAdjacentPreviewPrefetch(after: node, deviceID: devID, session: session)
+                }
+                previewLoadTask = task
+                await task.value
                 return
             }
 
@@ -429,15 +664,35 @@ final class BrowserModel {
             isLoadingPreview = true
             let task = Task { @MainActor [weak self] in
                 guard let self else { return }
+                await self.thumbnailPipeline.setPreviewPrioritized(true)
                 defer {
+                    Task { await self.thumbnailPipeline.setPreviewPrioritized(false) }
                     if self.previewingNode?.id == node.id {
                         self.isLoadingPreview = false
                     }
                 }
                 do {
-                    try await self.downloadPreviewFile(node: node, to: cacheURL, session: session)
+                    do {
+                        try await self.downloadPreviewWithProgress(node: node, to: cacheURL, session: session)
+                    } catch let error as DeviceError {
+                        if case .disconnected = error { throw error }
+                        // 设备通道偶发忙碌或先序事务退避时短暂等待并重试 1 次
+                        try? await Task.sleep(nanoseconds: 120_000_000)
+                        try Task.checkCancellation()
+                        try await self.downloadPreviewWithProgress(node: node, to: cacheURL, session: session)
+                    }
+                    try Task.checkCancellation()
+                    let decoded = await Self.decodeHighResImageAndMetadata(from: cacheURL, node: node)
                     guard !Task.isCancelled, self.previewingNode?.id == node.id else { return }
                     self.previewLocalURL = cacheURL
+                    if let image = decoded.image {
+                        self.previewFullImage = image
+                        self.previewMetadata = decoded.metadata
+                        self.previewProgress = 1.0
+                    } else {
+                        self.previewError = "原图格式暂不支持直接解码"
+                    }
+                    self.scheduleAdjacentPreviewPrefetch(after: node, deviceID: devID, session: session)
                 } catch is CancellationError {
                     return
                 } catch let error as DeviceError {
@@ -493,8 +748,13 @@ final class BrowserModel {
     func closePreview() {
         previewLoadTask?.cancel()
         previewLoadTask = nil
+        previewPrefetchTask?.cancel()
+        previewPrefetchTask = nil
         previewingNode = nil
         previewLocalURL = nil
+        previewFullImage = nil
+        previewMetadata = nil
+        previewProgress = 0
         previewError = nil
         isLoadingPreview = false
     }
@@ -649,6 +909,52 @@ final class BrowserModel {
         thumbnailCache[node.id]
     }
 
+    /// 零等待同步读取内存已解码缩略图，避免网格滚动期间反复触发全表重绘与主线程 JPEG 解码。
+    func cachedThumbnailImage(for node: RemoteNode) -> NSImage? {
+        guard !node.isDirectory, node.kind == .photo || node.kind == .video else {
+            return nil
+        }
+        let deviceKey = activeDeviceID?.rawValue ?? "default"
+        return thumbnailPipeline.memoryCachedImage(for: node, deviceID: deviceKey)
+    }
+
+    /// 仅供独立单元格调用的异步缩略图加载（命中内存/磁盘秒出；设备请求走 LIFO 最新可见优先调度）。
+    func loadThumbnailImage(for node: RemoteNode) async -> NSImage? {
+        guard !node.isDirectory,
+              node.kind == .photo || node.kind == .video,
+              !failedThumbnails.contains(node.id),
+              let session = activeSession else {
+            return nil
+        }
+        let expectedDeviceID = activeDeviceID
+        let deviceKey = expectedDeviceID?.rawValue ?? "default"
+        if let hit = thumbnailPipeline.memoryCachedImage(for: node, deviceID: deviceKey) {
+            return hit
+        }
+
+        do {
+            if let img = try await thumbnailPipeline.thumbnailImage(for: node, deviceID: deviceKey, session: session) {
+                guard activeDeviceID == expectedDeviceID else { return nil }
+                return img
+            } else {
+                failedThumbnails.insert(node.id)
+                return nil
+            }
+        } catch is CancellationError {
+            return nil
+        } catch let error as DeviceError {
+            if case .disconnected = error {
+                handleDeviceError(error)
+            } else {
+                failedThumbnails.insert(node.id)
+            }
+            return nil
+        } catch {
+            failedThumbnails.insert(node.id)
+            return nil
+        }
+    }
+
     func loadThumbnailIfNeeded(for node: RemoteNode) async {
         guard !node.isDirectory,
               node.kind == .photo || node.kind == .video,
@@ -730,6 +1036,85 @@ final class BrowserModel {
         } catch {
             errorMessage = error.localizedDescription
         }
+    }
+
+    private func downloadPreviewWithProgress(node: RemoteNode, to destURL: URL, session: DeviceSession) async throws {
+        try FileManager.default.createDirectory(
+            at: destURL.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        let partURL = URL(fileURLWithPath: destURL.path + ".droiddock-part")
+        try? FileManager.default.removeItem(at: partURL)
+        var succeeded = false
+        defer {
+            if !succeeded {
+                try? FileManager.default.removeItem(at: partURL)
+            }
+        }
+        let expectedSize = max(UInt64(1), node.size)
+        let nodeID = node.id
+        try await session.download(node, to: partURL) { [weak self] transferred in
+            let ratio = min(0.99, Double(transferred) / Double(expectedSize))
+            Task { @MainActor [weak self] in
+                guard let self, self.previewingNode?.id == nodeID else { return }
+                if ratio - self.previewProgress >= 0.02 || transferred >= expectedSize {
+                    self.previewProgress = ratio
+                }
+            }
+        }
+        try Task.checkCancellation()
+        if FileManager.default.fileExists(atPath: destURL.path) {
+            _ = try FileManager.default.replaceItemAt(destURL, withItemAt: partURL)
+        } else {
+            try FileManager.default.moveItem(at: partURL, to: destURL)
+        }
+        succeeded = true
+        Self.prunePreviewCacheIfNeeded(excludingURL: destURL)
+    }
+
+    private func scheduleAdjacentPreviewPrefetch(after node: RemoteNode, deviceID: String, session: DeviceSession) {
+        let photos = previewablePhotos
+        guard let idx = photos.firstIndex(where: { $0.id == node.id }),
+              idx + 1 < photos.count else {
+            return
+        }
+        let nextNode = photos[idx + 1]
+        let nextURL = previewCacheURL(for: nextNode, deviceID: deviceID)
+        guard !FileManager.default.fileExists(atPath: nextURL.path) else { return }
+
+        previewPrefetchTask?.cancel()
+        previewPrefetchTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 250_000_000)
+            guard !Task.isCancelled,
+                  let self,
+                  self.previewingNode?.id == node.id,
+                  self.activeDeviceID?.rawValue ?? "default" == deviceID else {
+                return
+            }
+            try? await self.downloadPreviewFile(node: nextNode, to: nextURL, session: session)
+        }
+    }
+
+    private static func decodeHighResImageAndMetadata(
+        from url: URL,
+        node: RemoteNode
+    ) async -> (image: NSImage?, metadata: PhotoMetadata) {
+        await Task.detached(priority: .userInitiated) {
+            let metadata = PhotoMetadata.extract(from: url, node: node, isOriginal: true)
+            if let source = CGImageSourceCreateWithURL(url as CFURL, nil) {
+                let decodeOptions: [CFString: Any] = [
+                    kCGImageSourceThumbnailMaxPixelSize: 6144,
+                    kCGImageSourceCreateThumbnailFromImageAlways: true,
+                    kCGImageSourceCreateThumbnailWithTransform: true,
+                    kCGImageSourceShouldCacheImmediately: true,
+                ]
+                if let cgImage = CGImageSourceCreateThumbnailAtIndex(source, 0, decodeOptions as CFDictionary) {
+                    let image = NSImage(cgImage: cgImage, size: NSSize(width: cgImage.width, height: cgImage.height))
+                    return (image, metadata)
+                }
+            }
+            return (NSImage(contentsOf: url), metadata)
+        }.value
     }
 
     private func downloadPreviewFile(node: RemoteNode, to destURL: URL, session: DeviceSession) async throws {

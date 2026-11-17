@@ -351,36 +351,23 @@ struct BrowserContentView: View {
     private func gridTile(for node: RemoteNode, showFileName: Bool) -> some View {
         let isSelected = appState.browser.selectedNodeIDs.contains(node.id)
         let badge = palette.nodeBadgeColors(for: node)
-        let thumbData = appState.browser.thumbnailData(for: node)
 
         return VStack(spacing: 6) {
             ZStack {
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .fill(badge.bg)
-                    .aspectRatio(1, contentMode: .fit)
-                    .overlay {
-                        if let thumbData, let image = NSImage(data: thumbData) {
-                            Image(nsImage: image)
-                                .resizable()
-                                .scaledToFill()
-                        } else {
-                            VStack(spacing: 6) {
-                                Image(systemName: iconName(for: node))
-                                    .font(.system(size: 30, weight: .medium))
-                                    .foregroundStyle(badge.fg)
-                                if !node.isDirectory && showFileName {
-                                    Text(PathUtils.formatByteCount(node.size))
-                                        .font(.system(size: 10))
-                                        .foregroundStyle(palette.secondaryText)
-                                }
-                            }
-                        }
-                    }
-                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 8, style: .continuous)
-                            .stroke(isSelected ? palette.accent : palette.dividerColor.opacity(0.6), lineWidth: isSelected ? 3 : 0.5)
-                    )
+                NodeThumbnailView(
+                    browser: appState.browser,
+                    node: node,
+                    badge: badge,
+                    iconName: iconName(for: node),
+                    showFileName: showFileName,
+                    secondaryTextColor: palette.secondaryText
+                )
+                .aspectRatio(1, contentMode: .fit)
+                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .stroke(isSelected ? palette.accent : palette.dividerColor.opacity(0.6), lineWidth: isSelected ? 3 : 0.5)
+                )
 
                 if node.kind == .video {
                     VStack {
@@ -413,9 +400,6 @@ struct BrowserContentView: View {
                 }
             }
             .aspectRatio(1, contentMode: .fit)
-            .task(id: node.id) {
-                await appState.browser.loadThumbnailIfNeeded(for: node)
-            }
 
             if showFileName {
                 VStack(spacing: 1) {
@@ -1106,5 +1090,52 @@ private final class LockedPromiseErrorBox: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         return error
+    }
+}
+
+private struct NodeThumbnailView: View {
+    let browser: BrowserModel
+    let node: RemoteNode
+    let badge: (fg: Color, bg: Color)
+    let iconName: String
+    let showFileName: Bool
+    let secondaryTextColor: Color
+
+    @State private var loadedImage: NSImage?
+
+    var body: some View {
+        let displayImage = loadedImage ?? browser.cachedThumbnailImage(for: node)
+
+        RoundedRectangle(cornerRadius: 8, style: .continuous)
+            .fill(badge.bg)
+            .aspectRatio(1, contentMode: .fit)
+            .overlay {
+                if let displayImage {
+                    Image(nsImage: displayImage)
+                        .interpolation(.medium)
+                        .resizable()
+                        .scaledToFill()
+                } else {
+                    VStack(spacing: 6) {
+                        Image(systemName: iconName)
+                            .font(.system(size: 30, weight: .medium))
+                            .foregroundStyle(badge.fg)
+                        if !node.isDirectory && showFileName {
+                            Text(PathUtils.formatByteCount(node.size))
+                                .font(.system(size: 10))
+                                .foregroundStyle(secondaryTextColor)
+                        }
+                    }
+                }
+            }
+            .task(id: node.id) {
+                if let cached = browser.cachedThumbnailImage(for: node) {
+                    loadedImage = cached
+                    return
+                }
+                loadedImage = nil
+                guard !node.isDirectory, node.kind == .photo || node.kind == .video else { return }
+                loadedImage = await browser.loadThumbnailImage(for: node)
+            }
     }
 }

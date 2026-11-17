@@ -24,10 +24,16 @@ public actor MTPSession {
     public init(transport: any MTPTransport) { self.transport = transport }
 
     private func withTransactionLock<T: Sendable>(_ work: () async throws -> T) async throws -> T {
+        try Task.checkCancellation()
         while isBusy {
             await withCheckedContinuation { waiters.append($0) }
         }
-        try Task.checkCancellation()
+        if Task.isCancelled {
+            if !waiters.isEmpty {
+                waiters.removeFirst().resume()
+            }
+            throw CancellationError()
+        }
         isBusy = true
         defer {
             isBusy = false
@@ -219,6 +225,7 @@ public actor MTPSession {
             let initial = Data(headerBuf.dropFirst(MTPContainer.headerSize))
             var received: UInt64 = 0
             var leftover = Data()
+            var cancelledWhileDraining = false
 
             if totalLen != UInt32.max {
                 guard Int(totalLen) >= MTPContainer.headerSize else {
@@ -238,7 +245,15 @@ public actor MTPSession {
                 }
                 var emptyCount = 0
                 while received < expectedPayload {
-                    try Task.checkCancellation()
+                    if !cancelledWhileDraining && Task.isCancelled {
+                        let remaining = expectedPayload - received
+                        if remaining <= 8 * 1024 * 1024 {
+                            // 小中体积对象取消时先静默排空当前 MTP 事务与 12B 响应包，避免残留数据污染后续 USB 会话
+                            cancelledWhileDraining = true
+                        } else {
+                            throw CancellationError()
+                        }
+                    }
                     let pkt = try await transport.receive(maxLength: readChunk)
                     if pkt.isEmpty {
                         emptyCount += 1
@@ -251,9 +266,13 @@ public actor MTPSession {
                     let need = expectedPayload - received
                     let use = min(UInt64(pkt.count), need)
                     if use > 0 {
-                        try onChunk(Data(pkt.prefix(Int(use))))
-                        received += use
-                        progress(received)
+                        if !cancelledWhileDraining {
+                            try onChunk(Data(pkt.prefix(Int(use))))
+                            received += use
+                            progress(received)
+                        } else {
+                            received += use
+                        }
                     }
                     if UInt64(pkt.count) > use {
                         leftover.append(contentsOf: pkt.dropFirst(Int(use)))
@@ -284,6 +303,9 @@ public actor MTPSession {
                 throw MTPError.unexpectedContainer("GetObject 预期响应容器，收到 \(resp.type)")
             }
             _ = try checked(MTPResult(data: Data(), responseCode: resp.code, responseParams: parseResponseParams(resp.payload)))
+            if cancelledWhileDraining {
+                throw CancellationError()
+            }
         }
     }
 

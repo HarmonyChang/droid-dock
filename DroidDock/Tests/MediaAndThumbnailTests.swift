@@ -226,6 +226,122 @@ final class MediaAndThumbnailTests: XCTestCase {
         browser.closePreview()
         XCTAssertNil(browser.previewingNode)
         XCTAssertNil(browser.previewLocalURL)
+        XCTAssertNil(browser.previewFullImage)
+        XCTAssertNil(browser.previewMetadata)
+    }
+
+    func testPhotoPreviewDecodesHighResOriginalAndExtractsEXIFMetadata() async throws {
+        let dbURL = tempRoot.appendingPathComponent("exif_index.sqlite3")
+        let cacheDir = tempRoot.appendingPathComponent("ExifThumbs", isDirectory: true)
+        let store = MediaIndexStore(databaseURL: dbURL)
+        let pipeline = ThumbnailPipeline(cacheDirectory: cacheDir, maxDiskBytes: 8 * 1024 * 1024)
+
+        let fullJPEG = try XCTUnwrap(makeTestEXIFJPEGData(width: 1600, height: 1200))
+        let tinyThumbJPEG = try XCTUnwrap(makeTestPNGData(width: 160, height: 120, color: .systemGray))
+        let storageID: UInt32 = 65537
+        let photoNode = RemoteNode(
+            id: "\(storageID):777",
+            storageID: storageID,
+            path: "/DCIM/Camera/IMG_EXIF_FULL.jpg",
+            name: "IMG_EXIF_FULL.jpg",
+            isDirectory: false,
+            size: UInt64(fullJPEG.count),
+            modified: Date(timeIntervalSince1970: 1_760_200_000),
+            kind: .photo
+        )
+
+        let provider = FakeFileProvider(
+            directories: [storageID: ["/DCIM/Camera": [photoNode]]],
+            thumbnails: [photoNode.id: tinyThumbJPEG],
+            filePayloads: [photoNode.id: fullJPEG]
+        )
+        let session = DeviceSession(provider: provider)
+        let browser = BrowserModel(mediaIndexStore: store, thumbnailPipeline: pipeline)
+        await browser.attachSession(session, deviceID: DeviceID(rawValue: "exif-device"))
+
+        // 先加载缩略图（160×120），再双击打开查看器，验证最终加载的是 1600×1200 高清原图及 EXIF
+        let gridThumb = await browser.loadThumbnailImage(for: photoNode)
+        XCTAssertNotNil(gridThumb)
+
+        await browser.openPreview(for: photoNode)
+        defer {
+            if let localURL = browser.previewLocalURL {
+                try? FileManager.default.removeItem(at: localURL)
+            }
+            browser.closePreview()
+        }
+
+        let fullImage = try XCTUnwrap(browser.previewFullImage)
+        XCTAssertEqual(Int(fullImage.size.width), 1600)
+        XCTAssertEqual(Int(fullImage.size.height), 1200)
+
+        let meta = try XCTUnwrap(browser.previewMetadata)
+        XCTAssertTrue(meta.isOriginalLoaded)
+        XCTAssertEqual(meta.pixelWidth, 1600)
+        XCTAssertEqual(meta.pixelHeight, 1200)
+        XCTAssertEqual(meta.dimensionsText, "1600 × 1200")
+        XCTAssertEqual(meta.megapixelsText, "1.9 MP")
+        XCTAssertEqual(meta.formatName, "JPEG")
+        XCTAssertEqual(meta.cameraModel, "OnePlus PKX110")
+        XCTAssertEqual(meta.lensModel, "24 mm f/1.8")
+        XCTAssertEqual(meta.focalLengthText, "24 mm")
+        XCTAssertEqual(meta.apertureText, "f/1.8")
+        XCTAssertEqual(meta.shutterSpeedText, "1/250 s")
+        XCTAssertEqual(meta.isoText, "ISO 100")
+        XCTAssertEqual(meta.exposureBiasText, "+0.3 EV")
+        XCTAssertNotNil(meta.capturedAt)
+    }
+
+    private func makeTestEXIFJPEGData(width: Int, height: Int) -> Data? {
+        let rep = NSBitmapImageRep(
+            bitmapDataPlanes: nil,
+            pixelsWide: width,
+            pixelsHigh: height,
+            bitsPerSample: 8,
+            samplesPerPixel: 4,
+            hasAlpha: true,
+            isPlanar: false,
+            colorSpaceName: .deviceRGB,
+            bytesPerRow: 0,
+            bitsPerPixel: 0
+        )
+        guard let rep, let ctx = NSGraphicsContext(bitmapImageRep: rep) else {
+            return nil
+        }
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = ctx
+        NSColor.systemBlue.setFill()
+        NSRect(x: 0, y: 0, width: width, height: height).fill()
+        NSGraphicsContext.restoreGraphicsState()
+        guard let cgImage = rep.cgImage else {
+            return nil
+        }
+
+        let out = NSMutableData()
+        guard let dest = CGImageDestinationCreateWithData(out as CFMutableData, "public.jpeg" as CFString, 1, nil) else {
+            return nil
+        }
+        let props: [CFString: Any] = [
+            kCGImageDestinationLossyCompressionQuality: 0.9,
+            kCGImagePropertyTIFFDictionary: [
+                kCGImagePropertyTIFFMake: "OnePlus",
+                kCGImagePropertyTIFFModel: "PKX110",
+            ],
+            kCGImagePropertyExifDictionary: [
+                kCGImagePropertyExifLensModel: "24 mm f/1.8",
+                kCGImagePropertyExifFocalLenIn35mmFilm: 24,
+                kCGImagePropertyExifFNumber: 1.8,
+                kCGImagePropertyExifExposureTime: 0.004,
+                kCGImagePropertyExifISOSpeedRatings: [100],
+                kCGImagePropertyExifExposureBiasValue: 0.3,
+                kCGImagePropertyExifDateTimeOriginal: "2026:11:16 14:30:22",
+            ],
+        ]
+        CGImageDestinationAddImage(dest, cgImage, props as CFDictionary)
+        guard CGImageDestinationFinalize(dest) else {
+            return nil
+        }
+        return out as Data
     }
 
     private func makeTestPNGData(width: Int, height: Int, color: NSColor) -> Data? {

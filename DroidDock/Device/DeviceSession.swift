@@ -48,6 +48,7 @@ actor DeviceSession {
     }
 
     private func run<T: Sendable>(_ operation: () async throws -> T) async throws -> T {
+        try Task.checkCancellation()
         if isDisconnected {
             throw DeviceError.disconnected
         }

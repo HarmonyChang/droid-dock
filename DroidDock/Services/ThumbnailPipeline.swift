@@ -8,15 +8,19 @@ import ImageIO
 actor ThumbnailPipeline {
     static let maxThumbnailDimension: Int = 320
     static let defaultDiskCacheLimitBytes: UInt64 = 2 * 1024 * 1024 * 1024
-    static let maxFallbackPhotoBytes: UInt64 = 50 * 1024 * 1024
-    static let maxFallbackVideoBytes: UInt64 = 30 * 1024 * 1024
+    static let maxFallbackPhotoBytes: UInt64 = 4 * 1024 * 1024
+    static let maxFallbackVideoBytes: UInt64 = 2 * 1024 * 1024
 
     private let cacheDirectory: URL
     private let maxDiskBytes: UInt64
     private let memoryCache = SendableMemoryCache()
+    private let imageCache = SendableImageCache()
     private let maxConcurrentDecodes: Int
     private var activeDecodes = 0
     private var decodeWaiters: [CheckedContinuation<Void, Never>] = []
+    private var isDeviceSlotBusy = false
+    private var isPreviewPrioritized = false
+    private var deviceSlotWaiters: [(id: UUID, continuation: CheckedContinuation<Void, Never>)] = []
 
     init(
         cacheDirectory: URL? = nil,
@@ -50,7 +54,42 @@ actor ThumbnailPipeline {
         return memoryCache.data(forKey: key)
     }
 
-    /// 按顺序尝试：内存 → 磁盘 → 设备原生 `GetThumb` → 下载临时文件后本地解码生成 320 px JPEG。
+    /// 已解码位图零耗时快读（仅查 `NSCache<NSString, NSImage>`，适合网格首次渲染同步读取）。
+    nonisolated func memoryCachedImage(for node: RemoteNode, deviceID: String) -> NSImage? {
+        let key = Self.cacheKey(deviceID: deviceID, node: node)
+        return imageCache.image(forKey: key)
+    }
+
+    /// 优先加载已解码的 `NSImage` 缩略图，并在后台线程完成位图解码，避免主线程重绘卡顿。
+    func thumbnailImage(for node: RemoteNode, deviceID: String, session: DeviceSession) async throws -> NSImage? {
+        let key = Self.cacheKey(deviceID: deviceID, node: node)
+        if let hit = imageCache.image(forKey: key) {
+            return hit
+        }
+        guard let data = try await thumbnail(for: node, deviceID: deviceID, session: session) else {
+            return nil
+        }
+        if let hit = imageCache.image(forKey: key) {
+            return hit
+        }
+        let decoded = await Task.detached(priority: .userInitiated) {
+            NSImage(data: data)
+        }.value
+        if let decoded {
+            imageCache.setImage(decoded, forKey: key, byteCost: data.count)
+        }
+        return decoded
+    }
+
+    /// 当用户打开高清原图预览时暂停后台缩略图设备 I/O，确保双击查看秒级拿到原图。
+    func setPreviewPrioritized(_ active: Bool) {
+        isPreviewPrioritized = active
+        if !active {
+            wakeNextDeviceWaiterIfPossible()
+        }
+    }
+
+    /// 按顺序尝试：内存 → 磁盘 → LIFO 设备通道（原生 `GetThumb` / 128 KB EXIF）→ 小文件下载后生成 320 px JPEG。
     func thumbnail(for node: RemoteNode, deviceID: String, session: DeviceSession) async throws -> Data? {
         guard !node.isDirectory, node.kind == .photo || node.kind == .video else {
             return nil
@@ -69,42 +108,53 @@ actor ThumbnailPipeline {
 
         try Task.checkCancellation()
 
-        // 第三级：设备原生缩略图（GetThumb）
-        if let nativeData = try await session.thumbnail(for: node), !nativeData.isEmpty {
-            let normalized = Self.downsampleImageData(nativeData, maxPixelSize: Self.maxThumbnailDimension) ?? nativeData
-            store(data: normalized, key: key, diskURL: diskURL)
-            return normalized
-        }
-
-        try Task.checkCancellation()
-
-        // 第四级兜底：大体积原图/4K 视频避免为缩略图拉取整文件挤占无线或 USB 带宽
-        let fallbackLimit = node.kind == .video ? Self.maxFallbackVideoBytes : Self.maxFallbackPhotoBytes
-        if node.size > 0 && node.size > fallbackLimit {
-            return nil
-        }
-
-        // 流式下载到临时文件，再按 min(4, 核心数) 并发限制生成 320 px 缩略图
-        let tempURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent("droiddock-thumb-\(UUID().uuidString)-\(node.name)")
-        defer { try? FileManager.default.removeItem(at: tempURL) }
-
-        try await session.download(node, to: tempURL) { _ in }
-        try Task.checkCancellation()
-
-        let generated: Data? = try await withDecodeSlot {
-            if node.kind == .photo {
-                return Self.generatePhotoThumbnail(at: tempURL, maxPixelSize: Self.maxThumbnailDimension)
-            } else {
-                return try await Self.generateVideoThumbnail(at: tempURL, maxPixelSize: Self.maxThumbnailDimension)
+        // 第三/四级需要访问设备：走 LIFO 栈调度（当前视口最新可见图片优先）并让路高清原图下载
+        return try await withDeviceThumbnailSlot {
+            if let memHit = memoryCache.data(forKey: key) {
+                return memHit
             }
-        }
+            if let diskData = readDiskCache(at: diskURL) {
+                memoryCache.setData(diskData, forKey: key)
+                return diskData
+            }
+            try Task.checkCancellation()
 
-        guard let generated, !generated.isEmpty else {
-            return nil
+            // 第三级：设备原生缩略图（GetThumb）或前 128 KB 内嵌 EXIF 缩略图
+            if let nativeData = try await session.thumbnail(for: node), !nativeData.isEmpty {
+                let normalized = Self.downsampleImageData(nativeData, maxPixelSize: Self.maxThumbnailDimension) ?? nativeData
+                store(data: normalized, key: key, diskURL: diskURL)
+                return normalized
+            }
+
+            try Task.checkCancellation()
+
+            // 第四级兜底：仅对小体积文件下载原件生成缩略图，避免 4K 视频或超大原片堵死串行管道
+            let fallbackLimit = node.kind == .video ? Self.maxFallbackVideoBytes : Self.maxFallbackPhotoBytes
+            if node.size > 0 && node.size > fallbackLimit {
+                return nil
+            }
+
+            let tempURL = FileManager.default.temporaryDirectory
+                .appendingPathComponent("droiddock-thumb-\(UUID().uuidString)-\(node.name)")
+            defer { try? FileManager.default.removeItem(at: tempURL) }
+
+            try await session.download(node, to: tempURL) { _ in }
+            try Task.checkCancellation()
+
+            let generated: Data? = try await withDecodeSlot {
+                if node.kind == .photo {
+                    return Self.generatePhotoThumbnail(at: tempURL, maxPixelSize: Self.maxThumbnailDimension)
+                } else {
+                    return try await Self.generateVideoThumbnail(at: tempURL, maxPixelSize: Self.maxThumbnailDimension)
+                }
+            }
+
+            guard let generated, !generated.isEmpty else {
+                return nil
+            }
+            store(data: generated, key: key, diskURL: diskURL)
+            return generated
         }
-        store(data: generated, key: key, diskURL: diskURL)
-        return generated
     }
 
     /// 执行磁盘缓存容量检查与按修改时间 LRU 淘汰。
@@ -168,6 +218,53 @@ actor ThumbnailPipeline {
         enforceDiskLimit()
     }
 
+    private func withDeviceThumbnailSlot<T: Sendable>(_ work: () async throws -> T) async throws -> T {
+        while isDeviceSlotBusy || isPreviewPrioritized {
+            if Task.isCancelled {
+                wakeNextDeviceWaiterIfPossible()
+                throw CancellationError()
+            }
+            let waiterID = UUID()
+            await withTaskCancellationHandler {
+                await withCheckedContinuation { continuation in
+                    if !isDeviceSlotBusy && !isPreviewPrioritized && !Task.isCancelled {
+                        continuation.resume()
+                    } else if Task.isCancelled {
+                        continuation.resume()
+                    } else {
+                        deviceSlotWaiters.append((waiterID, continuation))
+                    }
+                }
+            } onCancel: {
+                Task { await self.cancelDeviceWaiter(id: waiterID) }
+            }
+        }
+        if Task.isCancelled {
+            wakeNextDeviceWaiterIfPossible()
+            throw CancellationError()
+        }
+        isDeviceSlotBusy = true
+        defer {
+            isDeviceSlotBusy = false
+            wakeNextDeviceWaiterIfPossible()
+        }
+        return try await work()
+    }
+
+    private func cancelDeviceWaiter(id: UUID) {
+        if let idx = deviceSlotWaiters.firstIndex(where: { $0.id == id }) {
+            let waiter = deviceSlotWaiters.remove(at: idx)
+            waiter.continuation.resume()
+        }
+    }
+
+    private func wakeNextDeviceWaiterIfPossible() {
+        guard !isDeviceSlotBusy, !isPreviewPrioritized else { return }
+        if let latest = deviceSlotWaiters.popLast() {
+            latest.continuation.resume()
+        }
+    }
+
     private func withDecodeSlot<T: Sendable>(_ work: () async throws -> T) async throws -> T {
         while activeDecodes >= maxConcurrentDecodes {
             await withCheckedContinuation { decodeWaiters.append($0) }
@@ -186,6 +283,13 @@ actor ThumbnailPipeline {
     private static func downsampleImageData(_ data: Data, maxPixelSize: Int) -> Data? {
         guard let source = CGImageSourceCreateWithData(data as CFData, nil) else {
             return nil
+        }
+        if let props = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
+           let width = props[kCGImagePropertyPixelWidth] as? Int,
+           let height = props[kCGImagePropertyPixelHeight] as? Int,
+           max(width, height) <= maxPixelSize,
+           CGImageSourceGetStatus(source) == .statusComplete {
+            return data
         }
         let options: [CFString: Any] = [
             kCGImageSourceThumbnailMaxPixelSize: maxPixelSize,
@@ -249,5 +353,21 @@ private final class SendableMemoryCache: @unchecked Sendable {
 
     func setData(_ data: Data, forKey key: String) {
         cache.setObject(data as NSData, forKey: key as NSString, cost: data.count)
+    }
+}
+
+private final class SendableImageCache: @unchecked Sendable {
+    private let cache: NSCache<NSString, NSImage> = {
+        let c = NSCache<NSString, NSImage>()
+        c.countLimit = 800
+        return c
+    }()
+
+    func image(forKey key: String) -> NSImage? {
+        cache.object(forKey: key as NSString)
+    }
+
+    func setImage(_ image: NSImage, forKey key: String, byteCost: Int) {
+        cache.setObject(image, forKey: key as NSString, cost: byteCost)
     }
 }

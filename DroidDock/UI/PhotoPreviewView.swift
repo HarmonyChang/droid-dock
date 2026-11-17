@@ -55,7 +55,7 @@ private final class LockedPreviewURL: @unchecked Sendable {
     }
 }
 
-/// 内置高清图片查看器：支持双击图片放大/还原（1.0x ↔ 2.5x）、双指捏合、拖拽平移及左右翻页切换。
+/// 内置高清图片查看器：支持优先高清原图渲染、右上角照片信息卡片、双击放大/还原（1.0x ↔ 2.5x）、双指捏合、拖拽平移及左右翻页切换。
 struct PhotoLightboxView: View {
     let appState: AppState
     let node: RemoteNode
@@ -64,6 +64,7 @@ struct PhotoLightboxView: View {
     @State private var baseMagnification: CGFloat = 1.0
     @State private var steadyOffset: CGSize = .zero
     @State private var dragDelta: CGSize = .zero
+    @State private var showMetadataPanel: Bool = true
 
     private var palette: ElegantPalette { appState.palette }
 
@@ -108,6 +109,9 @@ struct PhotoLightboxView: View {
                     .truncationMode(.middle)
 
                 HStack(spacing: 8) {
+                    if let dims = appState.browser.previewMetadata?.dimensionsText {
+                        Text(dims)
+                    }
                     Text(PathUtils.formatByteCount(node.size))
                     if let currentIndex, totalCount > 1 {
                         Text("· 第 \(currentIndex + 1) / \(totalCount) 张")
@@ -161,6 +165,24 @@ struct PhotoLightboxView: View {
             .padding(.vertical, 4)
             .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Color.white.opacity(0.12)))
 
+            Button {
+                withAnimation(.easeInOut(duration: 0.16)) {
+                    showMetadataPanel.toggle()
+                }
+            } label: {
+                Label("信息", systemImage: showMetadataPanel ? "info.circle.fill" : "info.circle")
+                    .font(.system(size: 11.5, weight: .medium))
+                    .padding(.horizontal, 9)
+                    .padding(.vertical, 5)
+                    .background(
+                        RoundedRectangle(cornerRadius: 7, style: .continuous)
+                            .fill(showMetadataPanel ? palette.accent.opacity(0.85) : Color.white.opacity(0.14))
+                    )
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(Color.white)
+            .help("显示或隐藏右上角照片详细信息")
+
             if let localURL = appState.browser.previewLocalURL {
                 Button("Quick Look") {
                     QuickLookController.shared.present(url: localURL)
@@ -196,10 +218,14 @@ struct PhotoLightboxView: View {
     }
 
     private func imageCanvas(currentIndex: Int?, totalCount: Int, canStepPrev: Bool, canStepNext: Bool) -> some View {
-        GeometryReader { geo in
+        let resolved = resolvedImageState
+
+        return GeometryReader { geo in
             ZStack {
-                if let image = resolvedImage {
-                    Image(nsImage: image)
+                if let resolved {
+                    Image(nsImage: resolved.image)
+                        .interpolation(.high)
+                        .antialiased(true)
                         .resizable()
                         .aspectRatio(contentMode: .fit)
                         .frame(
@@ -251,9 +277,10 @@ struct PhotoLightboxView: View {
                     VStack(spacing: 12) {
                         ProgressView()
                             .tint(Color.white)
-                        Text("正在从手机读取原图…")
+                        Text(progressLoadingText)
                             .font(.system(size: 13))
                             .foregroundStyle(Color.white.opacity(0.85))
+                            .monospacedDigit()
                     }
                 } else {
                     VStack(spacing: 10) {
@@ -271,23 +298,68 @@ struct PhotoLightboxView: View {
                     }
                 }
 
-                if appState.browser.isLoadingPreview && resolvedImage != nil {
-                    VStack {
-                        Spacer()
-                        HStack(spacing: 8) {
-                            ProgressView()
-                                .controlSize(.small)
-                                .tint(Color.white)
-                            Text("正在加载高清原图…")
-                                .font(.system(size: 11.5))
-                                .foregroundStyle(Color.white)
+                if resolved?.isPlaceholder == true {
+                    if appState.browser.isLoadingPreview {
+                        VStack {
+                            Spacer()
+                            HStack(spacing: 8) {
+                                ProgressView()
+                                    .controlSize(.small)
+                                    .tint(Color.white)
+                                Text(progressLoadingText)
+                                    .font(.system(size: 11.5))
+                                    .foregroundStyle(Color.white)
+                                    .monospacedDigit()
+                            }
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 6)
+                            .background(Capsule().fill(Color.black.opacity(0.68)))
+                            .padding(.bottom, totalCount > 1 ? 58 : 18)
                         }
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 6)
-                        .background(Capsule().fill(Color.black.opacity(0.65)))
-                        .padding(.bottom, 18)
+                        .allowsHitTesting(false)
+                    } else if let previewError = appState.browser.previewError {
+                        VStack {
+                            Spacer()
+                            HStack(spacing: 10) {
+                                Image(systemName: "exclamationmark.triangle.fill")
+                                    .foregroundStyle(palette.warningColor)
+                                Text("高清原图读取失败（当前仅显示缩略图）：\(previewError)")
+                                    .font(.system(size: 11.5))
+                                    .foregroundStyle(Color.white)
+                                    .lineLimit(1)
+                                Button("重新加载") {
+                                    Task { await appState.browser.openPreview(for: node) }
+                                }
+                                .buttonStyle(.borderedProminent)
+                                .controlSize(.mini)
+                                .tint(palette.accent)
+                            }
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 7)
+                            .background(Capsule().fill(Color.black.opacity(0.75)))
+                            .padding(.bottom, totalCount > 1 ? 58 : 18)
+                        }
                     }
-                    .allowsHitTesting(false)
+                }
+
+                if showMetadataPanel {
+                    VStack {
+                        HStack {
+                            Spacer()
+                            PhotoMetadataOverlayCard(
+                                node: node,
+                                metadata: appState.browser.previewMetadata ?? PhotoMetadata.initial(from: node),
+                                isLoading: appState.browser.isLoadingPreview,
+                                progress: appState.browser.previewProgress,
+                                accent: palette.accent,
+                                successColor: palette.successColor
+                            )
+                        }
+                        Spacer()
+                    }
+                    .padding(.top, 14)
+                    .padding(.trailing, 18)
+                    .allowsHitTesting(true)
                 }
 
                 HStack {
@@ -367,16 +439,30 @@ struct PhotoLightboxView: View {
         }
     }
 
-    private var resolvedImage: NSImage? {
+    private var resolvedImageState: (image: NSImage, isPlaceholder: Bool)? {
+        if let fullImage = appState.browser.previewFullImage {
+            return (fullImage, false)
+        }
         if let localURL = appState.browser.previewLocalURL,
-           let fullImage = NSImage(contentsOf: localURL) {
-            return fullImage
+           let fallbackFull = NSImage(contentsOf: localURL) {
+            return (fallbackFull, false)
+        }
+        if let cachedThumb = appState.browser.cachedThumbnailImage(for: node) {
+            return (cachedThumb, true)
         }
         if let thumbData = appState.browser.thumbnailData(for: node),
            let thumbImage = NSImage(data: thumbData) {
-            return thumbImage
+            return (thumbImage, true)
         }
         return nil
+    }
+
+    private var progressLoadingText: String {
+        let pct = Int((appState.browser.previewProgress * 100).rounded())
+        if pct > 0 && pct < 100 {
+            return "正在读取高清原图 \(pct)%…"
+        }
+        return "正在从手机读取高清原图…"
     }
 
     private func toggleDoubleClickZoom() {
@@ -439,5 +525,152 @@ struct PhotoLightboxView: View {
             width: min(maxX, max(-maxX, offset.width)),
             height: min(maxY, max(-maxY, offset.height))
         )
+    }
+}
+
+private struct PhotoMetadataOverlayCard: View {
+    let node: RemoteNode
+    let metadata: PhotoMetadata
+    let isLoading: Bool
+    let progress: Double
+    let accent: Color
+    let successColor: Color
+
+    private static let dateFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "yyyy-MM-dd HH:mm:ss"
+        return f
+    }()
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 6) {
+                Image(systemName: "camera.aperture")
+                    .font(.system(size: 11.5, weight: .semibold))
+                    .foregroundStyle(Color.white.opacity(0.9))
+                Text("照片信息")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(Color.white)
+                Spacer()
+                statusBadge
+            }
+
+            Divider().overlay(Color.white.opacity(0.14))
+
+            VStack(alignment: .leading, spacing: 5) {
+                infoRow(
+                    label: "尺寸",
+                    value: dimensionSummary
+                )
+                infoRow(
+                    label: "大小 / 格式",
+                    value: "\(PathUtils.formatByteCount(metadata.fileSizeBytes)) · \(metadata.formatName)"
+                )
+                if let capturedAt = metadata.capturedAt {
+                    infoRow(label: "拍摄时间", value: Self.dateFormatter.string(from: capturedAt))
+                }
+                if let camera = metadata.cameraModel {
+                    infoRow(label: "拍摄设备", value: camera)
+                }
+                if let lens = metadata.lensModel {
+                    infoRow(label: "镜头", value: lens)
+                }
+                if let colorProfile = metadata.colorProfileName {
+                    infoRow(label: "色彩配置", value: colorProfile)
+                }
+                if let gps = metadata.gpsText {
+                    infoRow(label: "位置坐标", value: gps)
+                }
+                infoRow(label: "设备路径", value: node.path)
+            }
+
+            if !metadata.exposureTags.isEmpty {
+                Divider().overlay(Color.white.opacity(0.14))
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 5) {
+                        ForEach(metadata.exposureTags, id: \.self) { tag in
+                            Text(tag)
+                                .font(.system(size: 10.5, weight: .medium))
+                                .monospacedDigit()
+                                .foregroundStyle(Color.white.opacity(0.92))
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 3)
+                                .background(RoundedRectangle(cornerRadius: 5, style: .continuous).fill(Color.white.opacity(0.14)))
+                        }
+                    }
+                }
+            }
+        }
+        .padding(12)
+        .frame(width: 266, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(Color.black.opacity(0.64))
+                .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .stroke(Color.white.opacity(0.16), lineWidth: 1)
+        )
+        .shadow(color: Color.black.opacity(0.35), radius: 12, y: 4)
+    }
+
+    @ViewBuilder
+    private var statusBadge: some View {
+        if metadata.isOriginalLoaded {
+            HStack(spacing: 4) {
+                Circle()
+                    .fill(successColor)
+                    .frame(width: 6, height: 6)
+                Text("高清原图")
+            }
+            .font(.system(size: 10.5, weight: .medium))
+            .foregroundStyle(Color.white.opacity(0.92))
+            .padding(.horizontal, 6)
+            .padding(.vertical, 2)
+            .background(Capsule().fill(Color.white.opacity(0.12)))
+        } else if isLoading {
+            let pct = Int((progress * 100).rounded())
+            Text(pct > 0 ? "读取原图 \(pct)%" : "读取原图中…")
+                .font(.system(size: 10.5, weight: .medium))
+                .monospacedDigit()
+                .foregroundStyle(Color.white)
+                .padding(.horizontal, 6)
+                .padding(.vertical, 2)
+                .background(Capsule().fill(accent.opacity(0.75)))
+        } else {
+            Text("预览概览")
+                .font(.system(size: 10.5))
+                .foregroundStyle(Color.white.opacity(0.75))
+                .padding(.horizontal, 6)
+                .padding(.vertical, 2)
+                .background(Capsule().fill(Color.white.opacity(0.1)))
+        }
+    }
+
+    private var dimensionSummary: String {
+        if let dims = metadata.dimensionsText {
+            if let mp = metadata.megapixelsText {
+                return "\(dims)（\(mp)）"
+            }
+            return dims
+        }
+        return isLoading ? "读取原图后解析…" : "未知尺寸"
+    }
+
+    private func infoRow(label: String, value: String) -> some View {
+        HStack(alignment: .top, spacing: 8) {
+            Text(label)
+                .font(.system(size: 10.5))
+                .foregroundStyle(Color.white.opacity(0.58))
+                .frame(width: 58, alignment: .leading)
+            Text(value)
+                .font(.system(size: 11))
+                .foregroundStyle(Color.white.opacity(0.92))
+                .monospacedDigit()
+                .lineLimit(2)
+                .truncationMode(.middle)
+                .textSelection(.enabled)
+        }
     }
 }

@@ -4,12 +4,12 @@
 
 ## 当前状态
 
-- 当前阶段：**第二阶段（M5 · 双模式无线连接 + 扫码快传支持文件夹与相册预览）代码、Release 打包与单元测试全部完成 -- 修复二次 Review 全部问题并清理零编译警告，`QuickDropWebServer` 新增整个文件夹 ZIP 打包下载、子目录层级上传与 3 列相册缩略图/全屏大图视频灯箱预览；`USBMTPTests`（12/12）与 `DroidDockTests`（21/21）全部通过，0 Swift 编译警告**
+- 当前阶段：**真机体验专项优化完成并重新打包 -- 解决双击看图模糊（原图预览抢占通道、MTP 取消安全排空管道、6144 px 高清预解码与高插值渲染）、在查看器右上角新增半透明照片信息浮窗（尺寸/格式/相机镜头/EXIF 曝光参数/拍摄时间/色彩/GPS/路径），并将相册网格滑动缩略图升级为 LIFO 可见优先 + 128 KB 局部 EXIF 提取 + 独立单元格预解码位图缓存；`USBMTPTests`（12/12）与 `DroidDockTests`（22/22）全部通过，0 Swift 编译警告**
 - 代码与产物：
-  - [DroidDock/Services/QuickDropWebServer.swift](DroidDock/Services/QuickDropWebServer.swift)：基于 `Network.framework`（`NWListener` + 每连接独立并发队列）实现局域网快传服务，支持单文件与整个文件夹 `/usr/bin/ditto` ZIP 打包下载、带 `subpath` 保留目录结构的手机端上传、ImageIO/`AVAssetImageGenerator` 320 px 缩略图接口 `/api/thumb/<id>`、支持 HTTP `Range` 分片预览的 `/api/media/<id>`，以及手机端 3 列相册缩略图网格与全屏灯箱。
-  - [DroidDock/UI/WirelessPairingSheetView.swift](DroidDock/UI/WirelessPairingSheetView.swift) + [AppState.swift](DroidDock/App/AppState.swift)：默认打开「扫码快传（推荐新手 · 免设置）」，支持 Mac 选择/拖入文件及文件夹、接收图片 64 px 异步微缩图预览与 Quick Look 快速预览；可一键切换至「无线调试（全盘管理）」。
-  - 既有 Review 修复：[ADBProvider.swift](DroidDock/Device/ADB/ADBProvider.swift) 改为 `find -mindepth 1 -maxdepth 1` 避免大目录 `/*` 超长参数溢出；[ThumbnailPipeline.swift](DroidDock/Services/ThumbnailPipeline.swift) 增加大图 50 MB / 视频 30 MB 兜底拉取上限保护；[ADBClient.swift](DroidDock/Device/ADB/ADBClient.swift) 对同一无线设备去重；[BrowserModel.swift](DroidDock/App/BrowserModel.swift) 增加 `PreviewCache` 512 MB 自动淘汰。
-- 下一步：由用户在 [dist/DroidDock.app](dist/DroidDock.app) 完成真机实测验收（插线 USB MTP、手机相机扫「扫码快传」二维码体验文件夹收发与相册预览、无线调试全盘管理）。
+  - [MTPSession.swift](Packages/USBMTP/Sources/USBMTP/MTPSession.swift) + [MTPProvider.swift](DroidDock/Device/MTP/MTPProvider.swift) + [DeviceSession.swift](DroidDock/Device/DeviceSession.swift)：修复 `withTransactionLock` 取消唤醒漏接力隐患；`downloadObject` 小中体积事务取消时先安全排空残余字节与 12 B 响应包避免污染后续 USB 会话；支持 `MTPObjectInfo` 缓存与 128 KB `GetPartialObject` 内嵌 EXIF 缩略图提取。
+  - [ThumbnailPipeline.swift](DroidDock/Services/ThumbnailPipeline.swift) + [BrowserModel.swift](DroidDock/App/BrowserModel.swift)：新增 LIFO（最新可见单元格优先）设备队列、预览下载抢占暂停后台缩略图、`SendableImageCache` 后台位图解码缓存、`PhotoMetadata` EXIF 提取与相邻照片静默预取；整文件下载兜底缩窄至照片 4 MB / 视频 2 MB。
+  - [PhotoPreviewView.swift](DroidDock/UI/PhotoPreviewView.swift) + [BrowserContentView.swift](DroidDock/UI/BrowserContentView.swift)：双击查看器支持高分辨率解码渲染、清晰失败提示、顶部「信息」开关与右上角 `PhotoMetadataOverlayCard` 拍摄参数浮窗；网格单元格拆分为独立 `NodeThumbnailView` 消除全局刷新重解卡顿。
+- 下一步：由用户在已重启的 Release 版 [dist/DroidDock.app](dist/DroidDock.app)（PID `53776` 运行中）复测双击看图清晰度、右上角照片信息卡片及相册快速滑动出图速度。
 
 ## 里程碑进度
 
@@ -41,6 +41,23 @@
 - 设计稿 HTML 为打包页面，未做视觉评审。
 
 ## 开发日志
+
+### 2026-11-17 21:31 -- 修复真机双击看图模糊、新增右上角照片信息卡片，并优化相册滑动缩略图加载速度
+- 根因与修复（根据真机实测反馈）：
+  1. **双击看图高清化与防管道失步**：
+     - [Packages/USBMTP/Sources/USBMTP/MTPSession.swift](Packages/USBMTP/Sources/USBMTP/MTPSession.swift)：修复 `withTransactionLock` 取消唤醒后未接力下一等待者的隐患；在 `downloadObject` 对 ≤ 8 MB 事务取消时先静默排空当前数据与末尾 12 字节 Response 容器再抛出 `CancellationError`，防止半截响应污染后续原图与缩略图指令。
+     - [DroidDock/Services/ThumbnailPipeline.swift](DroidDock/Services/ThumbnailPipeline.swift) + [DroidDock/App/BrowserModel.swift](DroidDock/App/BrowserModel.swift)：打开预览时通过 `setPreviewPrioritized(true)` 优先抢占设备带宽（自动暂停后台缩略图设备 I/O），提供 `previewProgress` 实时进度、瞬时错误自动重试 1 次、后台 6144 px（含 EXIF 方向矫正）高清预解码，以及相邻照片 250 ms 静默预取；[DroidDock/UI/PhotoPreviewView.swift](DroidDock/UI/PhotoPreviewView.swift) 开启 `.interpolation(.high)` 与 `.antialiased(true)`，并在原图失败时给出明确提示与「重新加载」按钮（不静默停留在模糊缩略图）。
+  2. **右上角照片信息卡片（`PhotoMetadataOverlayCard`）**：
+     - 在 [DroidDock/App/BrowserModel.swift](DroidDock/App/BrowserModel.swift) 新增 `PhotoMetadata` 与 `ImageIO` EXIF 解析，提取真实宽高（已按 EXIF 方向 5–8 校正横竖屏）、百万像素、文件大小与格式、相机与镜头型号、等效焦距 / 光圈 / 快门 / ISO / 曝光补偿、拍摄时间、色彩配置、GPS 坐标与设备内路径。
+     - 在 [DroidDock/UI/PhotoPreviewView.swift](DroidDock/UI/PhotoPreviewView.swift) 查看器右上角展示半透明磨砂信息浮窗，顶部工具栏同步提供「信息」显示开关。
+  3. **相册网格滑动缩略图提速**：
+     - [DroidDock/Device/DeviceSession.swift](DroidDock/Device/DeviceSession.swift) 与 [DroidDock/Device/MTP/MTPProvider.swift](DroidDock/Device/MTP/MTPProvider.swift)：在 `DeviceSession.run` 入口校验任务取消避免已滑出单元格占用 USB 通道；为 `MTPFileProvider` 增加 `objectInfoCache`；对无原生 `GetThumb` 的照片通过 `GetPartialObject` 读取前 128 KB 仅提取内嵌 EXIF 缩略图。
+     - [DroidDock/Services/ThumbnailPipeline.swift](DroidDock/Services/ThumbnailPipeline.swift) 与 [DroidDock/UI/BrowserContentView.swift](DroidDock/UI/BrowserContentView.swift)：设备缩略图排队改为 LIFO 栈（滑停后当前视口最新图片优先加载）；增加后台已解码 `SendableImageCache` 并在网格使用独立 `NodeThumbnailView` 组件，消除单张缩略图回写触发全表重绘与主线程 JPEG 解码；同步将 [docs/DroidDock-Dev-Spec.md](docs/DroidDock-Dev-Spec.md) 更新。
+- 验证（2026-11-17 21:31）：
+  - 非测试代码（除 Apple `QLPreviewPanelDataSource` 协议签名外）零 `!` 强制解包，`USBMTP` 仅在 `DroidDock/Device/MTP/` 引入。
+  - `Packages/USBMTP` `swift test`：0 警告，**12/12** 通过。
+  - `xcodebuild -project DroidDock.xcodeproj -scheme DroidDock -destination 'platform=macOS,arch=arm64' build test`：0 Swift 编译器/链接器警告，**22/22** 用例全部通过（含新增 `testPhotoPreviewDecodesHighResOriginalAndExtractsEXIFMetadata`）。
+  - 执行 `scripts/package-app.sh`：Release 构建、`codesign --verify --deep --strict` 校验与 DMG 打包通过，更新 [dist/DroidDock.app](dist/DroidDock.app) 与 2.6 MB [dist/DroidDock-0.1.0-arm64.dmg](dist/DroidDock-0.1.0-arm64.dmg)；已重启 [dist/DroidDock.app](dist/DroidDock.app)（PID `53776` 运行中）。
 
 ### 2026-11-17 10:20 -- 扫码快传支持文件夹与相册预览、清空编译警告并完成代码提交
 - 扫码快传体验增强（[DroidDock/Services/QuickDropWebServer.swift](DroidDock/Services/QuickDropWebServer.swift)、[DroidDock/UI/WirelessPairingSheetView.swift](DroidDock/UI/WirelessPairingSheetView.swift)）：
