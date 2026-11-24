@@ -19,7 +19,13 @@ public enum MTPOperation {
     public static let deleteObject: UInt16 = 0x100B
     public static let sendObjectInfo: UInt16 = 0x100C
     public static let sendObject: UInt16 = 0x100D
+    public static let getDevicePropValue: UInt16 = 0x1015
     public static let getPartialObject: UInt16 = 0x101B
+}
+
+public enum MTPDeviceProperty {
+    public static let batteryLevel: UInt16 = 0x5001
+    public static let deviceFriendlyName: UInt16 = 0xD402
 }
 
 public enum MTPResponseCode {
@@ -37,6 +43,8 @@ public enum MTPError: Error, Sendable, Equatable {
     case malformedData(String)
     case unexpectedContainer(String)
     case responseFailed(code: UInt16)
+    case timeout(String)
+    case busy(String)
     case transport(String)
     case noDevice
 }
@@ -164,9 +172,27 @@ public struct MTPDeviceInfo: Sendable {
     public let deviceVersion: String
     public let serialNumber: String
     public let operationsSupported: [UInt16]
+    public let devicePropertiesSupported: [UInt16]
 
     public var supportsGetThumb: Bool { operationsSupported.contains(MTPOperation.getThumb) }
     public var supportsGetPartialObject: Bool { operationsSupported.contains(MTPOperation.getPartialObject) }
+    public var supportsBatteryLevel: Bool { devicePropertiesSupported.contains(MTPDeviceProperty.batteryLevel) }
+
+    public init(
+        manufacturer: String,
+        model: String,
+        deviceVersion: String,
+        serialNumber: String,
+        operationsSupported: [UInt16],
+        devicePropertiesSupported: [UInt16] = []
+    ) {
+        self.manufacturer = manufacturer
+        self.model = model
+        self.deviceVersion = deviceVersion
+        self.serialNumber = serialNumber
+        self.operationsSupported = operationsSupported
+        self.devicePropertiesSupported = devicePropertiesSupported
+    }
 
     public static func parse(_ data: Data) throws -> MTPDeviceInfo {
         var r = ByteReader(data)
@@ -177,13 +203,14 @@ public struct MTPDeviceInfo: Sendable {
         _ = try r.u16()      // FunctionalMode
         let ops = try r.u16Array()
         _ = try r.u16Array() // EventsSupported
-        _ = try r.u16Array() // DevicePropertiesSupported
+        let props = try r.u16Array() // DevicePropertiesSupported
         _ = try r.u16Array() // CaptureFormats
         _ = try r.u16Array() // PlaybackFormats
         return MTPDeviceInfo(
             manufacturer: try r.string(), model: try r.string(),
             deviceVersion: try r.string(), serialNumber: try r.string(),
-            operationsSupported: ops)
+            operationsSupported: ops,
+            devicePropertiesSupported: props)
     }
 }
 

@@ -2,9 +2,19 @@
 
 /// 批量传输通道抽象，便于用假实现测试会话逻辑。
 public protocol MTPTransport: Sendable {
+    var maxOutPacketSize: Int { get }
     func send(_ data: Data) async throws
     /// 读取一次 Bulk-IN，返回本次收到的字节（可能是容器的一部分）。
     func receive(maxLength: Int) async throws -> Data
+    func receive(maxLength: Int, timeout: TimeInterval?) async throws -> Data
+}
+
+public extension MTPTransport {
+    var maxOutPacketSize: Int { 512 }
+
+    func receive(maxLength: Int, timeout: TimeInterval?) async throws -> Data {
+        try await receive(maxLength: maxLength)
+    }
 }
 
 public struct MTPResult: Sendable {
@@ -84,12 +94,22 @@ public actor MTPSession {
         nextTransactionID &+= 1
         try await transport.send(MTPContainer.command(op, tid: tid, params: params).encoded())
         try await transport.send(MTPContainer(type: .data, code: op, transactionID: tid, payload: payload).encoded())
+        try await sendZLPForContainerIfNeeded(payloadBytes: UInt64(payload.count))
 
-        let (container, _) = try await readContainerAndRemainder()
+        let (container, _) = try await readContainerAndRemainder(timeout: 60)
         guard container.type == .response else {
             throw MTPError.unexpectedContainer("事务 \(tid) 预期响应容器，收到 \(container.type)")
         }
         return MTPResult(data: Data(), responseCode: container.code, responseParams: try parseResponseParams(container.payload))
+    }
+
+    private func sendZLPForContainerIfNeeded(payloadBytes: UInt64) async throws {
+        let mps = UInt64(max(0, transport.maxOutPacketSize))
+        guard mps > 0 else { return }
+        let totalContainerBytes = UInt64(MTPContainer.headerSize) + payloadBytes
+        if totalContainerBytes % mps == 0 {
+            try await transport.send(Data())
+        }
     }
 
     private func parseResponseParams(_ payload: Data) throws -> [UInt32] {
@@ -99,10 +119,10 @@ public actor MTPSession {
         return rp
     }
 
-    private func receiveNonEmpty(into buffer: inout Data, minBytes: Int) async throws {
+    private func receiveNonEmpty(into buffer: inout Data, minBytes: Int, timeout: TimeInterval? = nil) async throws {
         var emptyCount = 0
         while buffer.count < minBytes {
-            let chunk = try await transport.receive(maxLength: readChunk)
+            let chunk = try await transport.receive(maxLength: readChunk, timeout: timeout)
             if chunk.isEmpty {
                 emptyCount += 1
                 if emptyCount >= 8 {
@@ -115,16 +135,16 @@ public actor MTPSession {
         }
     }
 
-    private func readContainerAndRemainder(initialBuffer: Data = Data()) async throws -> (MTPContainer, Data) {
+    private func readContainerAndRemainder(initialBuffer: Data = Data(), timeout: TimeInterval? = nil) async throws -> (MTPContainer, Data) {
         // 上一个数据容器恰为包长整数倍时设备会发零长度包，需跳过
         var buffer = initialBuffer
-        try await receiveNonEmpty(into: &buffer, minBytes: MTPContainer.headerSize)
+        try await receiveNonEmpty(into: &buffer, minBytes: MTPContainer.headerSize, timeout: timeout)
         var r = ByteReader(buffer)
         let length = Int(try r.u32())     // 超过 4GB 的数据容器长度为 0xFFFFFFFF
         guard length >= MTPContainer.headerSize, length != Int(UInt32.max) else {
             throw MTPError.malformedData("不支持的容器长度 \(length)")
         }
-        try await receiveNonEmpty(into: &buffer, minBytes: length)
+        try await receiveNonEmpty(into: &buffer, minBytes: length, timeout: timeout)
         let container = try MTPContainer.decode(buffer.prefix(length))
         let remainder = buffer.count > length ? Data(buffer.dropFirst(length)) : Data()
         return (container, remainder)
@@ -141,6 +161,38 @@ public actor MTPSession {
 
     public func deviceInfo() async throws -> MTPDeviceInfo {
         try MTPDeviceInfo.parse(try checked(try await execute(MTPOperation.getDeviceInfo)).data)
+    }
+
+    /// 读取设备属性值（GetDevicePropValue），设备不支持该属性时返回 nil。
+    public func devicePropertyData(_ propCode: UInt16) async throws -> Data? {
+        let res = try await execute(MTPOperation.getDevicePropValue, params: [UInt32(propCode)])
+        guard res.responseCode == MTPResponseCode.ok, !res.data.isEmpty else {
+            return nil
+        }
+        return res.data
+    }
+
+    /// 通过标准 PTP/MTP DeviceProp `0x5001` 查询当前电量百分比（0–100）；不支持时返回 nil。
+    public func batteryLevel() async throws -> Int? {
+        guard let data = try await devicePropertyData(MTPDeviceProperty.batteryLevel),
+              !data.isEmpty else {
+            return nil
+        }
+        let value: UInt32
+        switch data.count {
+        case 1:
+            value = UInt32(data[data.startIndex])
+        case 2:
+            var r = ByteReader(data)
+            value = UInt32(try r.u16())
+        case 4:
+            var r = ByteReader(data)
+            value = try r.u32()
+        default:
+            value = UInt32(data[data.startIndex])
+        }
+        guard value <= 100 else { return nil }
+        return Int(value)
     }
 
     public func openSession(id: UInt32 = 1) async throws {
@@ -377,8 +429,9 @@ public actor MTPSession {
                 sent += UInt64(chunk.count)
                 progress(sent)
             }
+            try await sendZLPForContainerIfNeeded(payloadBytes: fileSize)
 
-            let (resp, _) = try await readContainerAndRemainder()
+            let (resp, _) = try await readContainerAndRemainder(timeout: 60)
             guard resp.type == .response else {
                 throw MTPError.unexpectedContainer("SendObject 预期响应容器，收到 \(resp.type)")
             }

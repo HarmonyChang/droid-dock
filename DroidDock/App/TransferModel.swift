@@ -10,13 +10,22 @@ final class TransferModel {
     private(set) var tasks: [TransferTask] = []
     var conflictStrategy: ConflictStrategy = .rename
     private(set) var overallSpeedBytesPerSec: Double = 0
+    private(set) var overallProgress: Double = 0
+    private(set) var totalTaskCount: Int = 0
+    private(set) var nonCancelledCount: Int = 0
     private(set) var activeCount: Int = 0
     private(set) var failedCount: Int = 0
     private(set) var completedCount: Int = 0
+    private(set) var activeOrCurrentTask: TransferTask?
+    private(set) var isPreparing: Bool = false
+    private(set) var preparingMessage: String?
     var isTrayDismissed: Bool = false
 
     private var onUploadCompleted: (@MainActor () -> Void)?
     private var onDisconnectDetected: (@MainActor (DeviceID) -> Void)?
+    private var onTransferActivityChanged: (@MainActor (Bool) -> Void)?
+    private var isReportingTransferActivity: Bool = false
+    private var transferActivity: NSObjectProtocol?
 
     init() {
         Task { [weak self] in
@@ -26,42 +35,17 @@ final class TransferModel {
 
     func configureCallbacks(
         onUploadCompleted: @escaping @MainActor () -> Void,
-        onDisconnectDetected: @escaping @MainActor (DeviceID) -> Void
+        onDisconnectDetected: @escaping @MainActor (DeviceID) -> Void,
+        onTransferActivityChanged: (@MainActor (Bool) -> Void)? = nil
     ) {
         self.onUploadCompleted = onUploadCompleted
         self.onDisconnectDetected = onDisconnectDetected
+        self.onTransferActivityChanged = onTransferActivityChanged
     }
 
     var shouldShowTray: Bool {
         guard !isTrayDismissed else { return false }
-        return !tasks.isEmpty && (activeCount > 0 || failedCount > 0 || completedCount > 0)
-    }
-
-    var overallProgress: Double {
-        let relevant = tasks.filter { $0.state != .cancelled }
-        guard !relevant.isEmpty else { return 0 }
-        let total = relevant.reduce(UInt64(0)) { $0 + max($1.totalBytes, $1.transferredBytes) }
-        guard total > 0 else {
-            let doneCount = relevant.filter { $0.state == .completed }.count
-            return Double(doneCount) / Double(relevant.count)
-        }
-        let done = relevant.reduce(UInt64(0)) { sum, task in
-            if case .completed = task.state {
-                return sum + max(task.totalBytes, task.transferredBytes)
-            }
-            return sum + task.transferredBytes
-        }
-        return min(1, Double(done) / Double(total))
-    }
-
-    var activeOrCurrentTask: TransferTask? {
-        tasks.first { $0.state == .running }
-            ?? tasks.first { $0.state == .queued }
-            ?? tasks.last {
-                if case .failed = $0.state { return true }
-                return false
-            }
-            ?? tasks.last
+        return isPreparing || (totalTaskCount > 0 && (activeCount > 0 || failedCount > 0 || completedCount > 0))
     }
 
     func attachSession(_ session: DeviceSession?, deviceID: DeviceID?) async {
@@ -87,6 +71,8 @@ final class TransferModel {
     func enqueueUploads(urls: [URL], to remoteDir: String, storage: UInt32) async {
         guard !urls.isEmpty else { return }
         isTrayDismissed = false
+        isPreparing = true
+        preparingMessage = "正在扫描待传文件…"
         _ = await queue.enqueueUploads(urls: urls, toRemoteDir: remoteDir, storage: storage)
     }
 
@@ -137,14 +123,44 @@ final class TransferModel {
     }
 
     private func apply(_ snapshot: TransferSnapshot) {
-        let hadActive = activeCount > 0 || failedCount > 0
+        let hadActive = activeCount > 0 || failedCount > 0 || isPreparing
+        let wasWorking = isReportingTransferActivity
         tasks = snapshot.tasks
         conflictStrategy = snapshot.conflictStrategy
         overallSpeedBytesPerSec = snapshot.overallSpeedBytesPerSec
+        overallProgress = snapshot.overallProgress
+        totalTaskCount = snapshot.totalTaskCount
+        nonCancelledCount = snapshot.nonCancelledCount
         activeCount = snapshot.activeCount
         failedCount = snapshot.failedCount
         completedCount = snapshot.completedCount
-        if !hadActive && (snapshot.activeCount > 0 || snapshot.failedCount > 0) {
+        activeOrCurrentTask = snapshot.activeTask
+            ?? snapshot.tasks.last {
+                if case .failed = $0.state { return true }
+                return false
+            }
+            ?? snapshot.tasks.last
+        isPreparing = snapshot.isPreparing
+        preparingMessage = snapshot.preparingMessage
+
+        let isNowWorking = snapshot.activeCount > 0 || snapshot.isPreparing
+        if isNowWorking && !wasWorking {
+            isReportingTransferActivity = true
+            transferActivity = ProcessInfo.processInfo.beginActivity(
+                options: [.userInitiated, .idleSystemSleepDisabled],
+                reason: "正在通过 USB 与 Android 设备传输文件"
+            )
+            onTransferActivityChanged?(true)
+        } else if !isNowWorking && wasWorking {
+            isReportingTransferActivity = false
+            if let token = transferActivity {
+                ProcessInfo.processInfo.endActivity(token)
+                transferActivity = nil
+            }
+            onTransferActivityChanged?(false)
+        }
+
+        if !hadActive && (snapshot.activeCount > 0 || snapshot.failedCount > 0 || snapshot.isPreparing) {
             isTrayDismissed = false
         }
     }

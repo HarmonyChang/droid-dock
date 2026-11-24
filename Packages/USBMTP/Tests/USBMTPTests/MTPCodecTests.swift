@@ -86,6 +86,30 @@ final class MTPCodecTests: XCTestCase {
         XCTAssertEqual(parsedDir.filename, "新建相册")
         XCTAssertEqual(parsedDir.compressedSize, 0)
     }
+
+    func testDeviceInfoParsesDevicePropertiesSupported() throws {
+        var w = ByteWriter()
+        w.u16(100) // StandardVersion
+        w.u32(6)   // VendorExtensionID
+        w.u16(100) // MTPVersion
+        w.string("android.com: 1.0;")
+        w.u16(0)   // FunctionalMode
+        w.u32(2); w.u16(MTPOperation.getDeviceInfo); w.u16(MTPOperation.getDevicePropValue)
+        w.u32(0)   // EventsSupported
+        w.u32(2); w.u16(MTPDeviceProperty.batteryLevel); w.u16(MTPDeviceProperty.deviceFriendlyName)
+        w.u32(0)   // CaptureFormats
+        w.u32(0)   // PlaybackFormats
+        w.string("OnePlus")
+        w.string("PKX110")
+        w.string("1.0")
+        w.string("ABC123")
+
+        let info = try MTPDeviceInfo.parse(w.data)
+        XCTAssertEqual(info.manufacturer, "OnePlus")
+        XCTAssertEqual(info.model, "PKX110")
+        XCTAssertEqual(info.devicePropertiesSupported, [MTPDeviceProperty.batteryLevel, MTPDeviceProperty.deviceFriendlyName])
+        XCTAssertTrue(info.supportsBatteryLevel)
+    }
 }
 
 /// 脚本化传输：按顺序返回预置的字节块，验证会话的事务/分块拼装逻辑。
@@ -208,5 +232,83 @@ final class MTPSessionTests: XCTestCase {
         let parsed = try MTPObjectInfo.parse(infoData, handle: 0)
         XCTAssertTrue(parsed.isDirectory)
         XCTAssertEqual(parsed.filename, "NewDir")
+    }
+
+    func testUploadObjectSendsZLPOnMaxPacketSizeBoundary() async throws {
+        // 500 + 12 = 512 字节，恰为 USB 2.0 Bulk wMaxPacketSize (512) 整数倍，必须在数据尾发送一次空 Data (ZLP)
+        let exactOnePacketPayload = Data(repeating: 0x2A, count: 500)
+        var handlePayload = ByteWriter()
+        handlePayload.u32(0x10001); handlePayload.u32(10); handlePayload.u32(901)
+        let infoResp1 = MTPContainer(type: .response, code: MTPResponseCode.ok, transactionID: 1, payload: handlePayload.data).encoded()
+        let sendResp1 = MTPContainer(type: .response, code: MTPResponseCode.ok, transactionID: 2).encoded()
+        let t1 = ScriptedTransport(replies: [infoResp1, sendResp1])
+
+        let offset1 = LockedBox(0)
+        _ = try await MTPSession(transport: t1).uploadObject(
+            storageID: 0x10001,
+            parentHandle: 10,
+            filename: "exact500.bin",
+            fileSize: 500,
+            readChunk: { maxBytes in
+                var out = Data()
+                offset1.mutate { cur in
+                    let end = min(exactOnePacketPayload.count, cur + maxBytes)
+                    out = exactOnePacketPayload.subdata(in: cur..<end)
+                    cur = end
+                }
+                return out
+            },
+            progress: { _ in }
+        )
+        XCTAssertEqual(t1.sent.count, 5)
+        XCTAssertEqual(t1.sent[3].count, 512)
+        XCTAssertEqual(t1.sent[4], Data())
+
+        // 65,524 + 12 = 65,536 字节（128 × 512），同样必须补发一次 ZLP
+        let exactChunkPayload = Data(repeating: 0x3B, count: 65_524)
+        let infoResp2 = MTPContainer(type: .response, code: MTPResponseCode.ok, transactionID: 1, payload: handlePayload.data).encoded()
+        let sendResp2 = MTPContainer(type: .response, code: MTPResponseCode.ok, transactionID: 2).encoded()
+        let t2 = ScriptedTransport(replies: [infoResp2, sendResp2])
+
+        let offset2 = LockedBox(0)
+        _ = try await MTPSession(transport: t2).uploadObject(
+            storageID: 0x10001,
+            parentHandle: 10,
+            filename: "exact65524.bin",
+            fileSize: 65_524,
+            readChunk: { maxBytes in
+                var out = Data()
+                offset2.mutate { cur in
+                    let end = min(exactChunkPayload.count, cur + maxBytes)
+                    out = exactChunkPayload.subdata(in: cur..<end)
+                    cur = end
+                }
+                return out
+            },
+            progress: { _ in }
+        )
+        XCTAssertEqual(t2.sent.count, 5)
+        XCTAssertEqual(t2.sent[3].count, 65_536)
+        XCTAssertEqual(t2.sent[4], Data())
+    }
+
+    func testBatteryLevelReadsValidAndHandlesUnsupported() async throws {
+        let batteryData = MTPContainer(
+            type: .data,
+            code: MTPOperation.getDevicePropValue,
+            transactionID: 1,
+            payload: Data([87])
+        ).encoded()
+        let okResp = MTPContainer(type: .response, code: MTPResponseCode.ok, transactionID: 1).encoded()
+        let unsupportedResp = MTPContainer(type: .response, code: 0x200A, transactionID: 2).encoded()
+
+        let t = ScriptedTransport(replies: [batteryData, okResp, unsupportedResp])
+        let session = MTPSession(transport: t)
+
+        let first = try await session.batteryLevel()
+        XCTAssertEqual(first, 87)
+
+        let second = try await session.batteryLevel()
+        XCTAssertNil(second)
     }
 }

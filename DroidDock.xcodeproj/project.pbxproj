@@ -41,6 +41,9 @@
 		A10000200000000000000020 /* ADBProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = B100001F000000000000001F /* ADBProvider.swift */; };
 		A10000210000000000000021 /* WirelessPairingSheetView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000200000000000000020 /* WirelessPairingSheetView.swift */; };
 		A10000220000000000000022 /* QuickDropWebServer.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000210000000000000021 /* QuickDropWebServer.swift */; };
+		A10000230000000000000023 /* AppUpdateService.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000220000000000000022 /* AppUpdateService.swift */; };
+		A10000240000000000000024 /* AppUpdateSheetView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000230000000000000023 /* AppUpdateSheetView.swift */; };
+		A10000250000000000000025 /* AppUpdateTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000240000000000000024 /* AppUpdateTests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -87,6 +90,9 @@
 		B100001F000000000000001F /* ADBProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ADBProvider.swift; sourceTree = "<group>"; };
 		B10000200000000000000020 /* WirelessPairingSheetView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WirelessPairingSheetView.swift; sourceTree = "<group>"; };
 		B10000210000000000000021 /* QuickDropWebServer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QuickDropWebServer.swift; sourceTree = "<group>"; };
+		B10000220000000000000022 /* AppUpdateService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppUpdateService.swift; sourceTree = "<group>"; };
+		B10000230000000000000023 /* AppUpdateSheetView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppUpdateSheetView.swift; sourceTree = "<group>"; };
+		B10000240000000000000024 /* AppUpdateTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppUpdateTests.swift; sourceTree = "<group>"; };
 		B20000010000000000000001 /* DroidDock.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = DroidDock.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		B20000020000000000000002 /* DroidDockTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = DroidDockTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
@@ -155,6 +161,7 @@
 				B10000180000000000000018 /* PhotoPreviewView.swift */,
 				B100001A000000000000001A /* BrandLogoView.swift */,
 				B10000200000000000000020 /* WirelessPairingSheetView.swift */,
+				B10000230000000000000023 /* AppUpdateSheetView.swift */,
 			);
 			path = UI;
 			sourceTree = "<group>";
@@ -215,6 +222,7 @@
 				B10000110000000000000011 /* BrowserAndDeviceTests.swift */,
 				B10000150000000000000015 /* TransferTests.swift */,
 				B10000190000000000000019 /* MediaAndThumbnailTests.swift */,
+				B10000240000000000000024 /* AppUpdateTests.swift */,
 			);
 			path = Tests;
 			sourceTree = "<group>";
@@ -226,6 +234,7 @@
 				B10000160000000000000016 /* MediaIndexStore.swift */,
 				B10000170000000000000017 /* ThumbnailPipeline.swift */,
 				B10000210000000000000021 /* QuickDropWebServer.swift */,
+				B10000220000000000000022 /* AppUpdateService.swift */,
 			);
 			path = Services;
 			sourceTree = "<group>";
@@ -356,6 +365,8 @@
 				A10000200000000000000020 /* ADBProvider.swift in Sources */,
 				A10000210000000000000021 /* WirelessPairingSheetView.swift in Sources */,
 				A10000220000000000000022 /* QuickDropWebServer.swift in Sources */,
+				A10000230000000000000023 /* AppUpdateService.swift in Sources */,
+				A10000240000000000000024 /* AppUpdateSheetView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -367,6 +378,7 @@
 				A10000120000000000000012 /* BrowserAndDeviceTests.swift in Sources */,
 				A10000160000000000000016 /* TransferTests.swift in Sources */,
 				A100001A000000000000001A /* MediaAndThumbnailTests.swift in Sources */,
+				A10000250000000000000025 /* AppUpdateTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -429,7 +441,7 @@
 				CODE_SIGN_IDENTITY = "-";
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 1;
+				CURRENT_PROJECT_VERSION = 2;
 				ENABLE_APP_SANDBOX = NO;
 				ENABLE_HARDENED_RUNTIME = NO;
 				GENERATE_INFOPLIST_FILE = YES;
@@ -440,7 +452,7 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MARKETING_VERSION = 0.1.0;
+				MARKETING_VERSION = 0.2.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.droiddock.app;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 			};
@@ -453,7 +465,7 @@
 				CODE_SIGN_IDENTITY = "-";
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 1;
+				CURRENT_PROJECT_VERSION = 2;
 				ENABLE_APP_SANDBOX = NO;
 				ENABLE_HARDENED_RUNTIME = NO;
 				GENERATE_INFOPLIST_FILE = YES;
@@ -464,7 +476,7 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MARKETING_VERSION = 0.1.0;
+				MARKETING_VERSION = 0.2.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.droiddock.app;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 			};

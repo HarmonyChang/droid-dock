@@ -776,6 +776,10 @@ final class BrowserModel {
         }
     }
 
+    func setTransferPrioritized(_ active: Bool) async {
+        await thumbnailPipeline.setTransferPrioritized(active)
+    }
+
     /// 在当前目录创建新文件夹；成功返回 nil，失败返回可读错误消息。
     func createDirectory(name: String) async -> String? {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)

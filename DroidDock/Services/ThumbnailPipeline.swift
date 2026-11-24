@@ -20,6 +20,7 @@ actor ThumbnailPipeline {
     private var decodeWaiters: [CheckedContinuation<Void, Never>] = []
     private var isDeviceSlotBusy = false
     private var isPreviewPrioritized = false
+    private var isTransferPrioritized = false
     private var deviceSlotWaiters: [(id: UUID, continuation: CheckedContinuation<Void, Never>)] = []
 
     init(
@@ -84,6 +85,14 @@ actor ThumbnailPipeline {
     /// 当用户打开高清原图预览时暂停后台缩略图设备 I/O，确保双击查看秒级拿到原图。
     func setPreviewPrioritized(_ active: Bool) {
         isPreviewPrioritized = active
+        if !active {
+            wakeNextDeviceWaiterIfPossible()
+        }
+    }
+
+    /// 当批量传输队列运行时暂停后台缩略图设备 I/O，避免抢占同一条 USB MTP 管道。
+    func setTransferPrioritized(_ active: Bool) {
+        isTransferPrioritized = active
         if !active {
             wakeNextDeviceWaiterIfPossible()
         }
@@ -219,7 +228,7 @@ actor ThumbnailPipeline {
     }
 
     private func withDeviceThumbnailSlot<T: Sendable>(_ work: () async throws -> T) async throws -> T {
-        while isDeviceSlotBusy || isPreviewPrioritized {
+        while isDeviceSlotBusy || isPreviewPrioritized || isTransferPrioritized {
             if Task.isCancelled {
                 wakeNextDeviceWaiterIfPossible()
                 throw CancellationError()
@@ -227,7 +236,7 @@ actor ThumbnailPipeline {
             let waiterID = UUID()
             await withTaskCancellationHandler {
                 await withCheckedContinuation { continuation in
-                    if !isDeviceSlotBusy && !isPreviewPrioritized && !Task.isCancelled {
+                    if !isDeviceSlotBusy && !isPreviewPrioritized && !isTransferPrioritized && !Task.isCancelled {
                         continuation.resume()
                     } else if Task.isCancelled {
                         continuation.resume()
@@ -259,7 +268,7 @@ actor ThumbnailPipeline {
     }
 
     private func wakeNextDeviceWaiterIfPossible() {
-        guard !isDeviceSlotBusy, !isPreviewPrioritized else { return }
+        guard !isDeviceSlotBusy, !isPreviewPrioritized, !isTransferPrioritized else { return }
         if let latest = deviceSlotWaiters.popLast() {
             latest.continuation.resume()
         }

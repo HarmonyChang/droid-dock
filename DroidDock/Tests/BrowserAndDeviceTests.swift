@@ -477,4 +477,119 @@ final class BrowserAndDeviceTests: XCTestCase {
         XCTAssertTrue(FileManager.default.fileExists(atPath: nestedURL.path))
         XCTAssertEqual(try Data(contentsOf: nestedURL), folderPhotoData)
     }
+
+    func testADBParseDeviceStatusWiFiAndCharging() throws {
+        let output = """
+        ===BATTERY===
+        Current Battery Service state:
+          AC powered: true
+          USB powered: false
+          Wireless powered: false
+          status: 2
+          level: 82
+          scale: 100
+          temperature: 325
+        ===ANDROID_VER===
+        15
+        ===WIFI===
+        Wi-Fi is enabled
+        mWifiInfo SSID: "Studio-5G", BSSID: aa:bb:cc:dd:ee:ff, MAC: 02:00:00:00:00:00
+        ===CONN===
+        Active default network: 100
+        NetworkAgentInfo [WIFI () - 100] { Transports: WIFI CONNECTED VALIDATED }
+        ===TELEPHONY===
+        mDataConnectionState=0
+        ===IP===
+        3: wlan0    inet 192.168.1.88/24 brd 192.168.1.255 scope global wlan0
+        """
+
+        let status = ADBFileProvider.parseDeviceStatusOutput(output, serial: "adb-xyz._adb-tls-connect._tcp")
+        XCTAssertEqual(status.batteryLevel, 82)
+        XCTAssertEqual(status.chargingState, .charging)
+        let temp = try XCTUnwrap(status.batteryTempCelsius)
+        XCTAssertEqual(temp, 32.5, accuracy: 0.01)
+        XCTAssertEqual(status.networkType, .wifi)
+        XCTAssertEqual(status.wifiSSID, "Studio-5G")
+        XCTAssertEqual(status.ipAddress, "192.168.1.88")
+        XCTAssertEqual(status.androidVersion, "Android 15")
+        XCTAssertEqual(status.connectionDetail, "Wi-Fi 无线调试 (ADB)")
+    }
+
+    func testADBParseDeviceStatusCellular5GAndDischarging() throws {
+        let output = """
+        ===BATTERY===
+          AC powered: false
+          USB powered: false
+          status: 3
+          level: 19
+          temperature: 290
+        ===ANDROID_VER===
+        16
+        ===WIFI===
+        Wi-Fi is disabled
+        ===CONN===
+        NetworkAgentInfo [MOBILE (NR) - 102] { Transports: CELLULAR CONNECTED }
+        ===TELEPHONY===
+        mDataConnectionState=2
+        mDataNetworkType=20
+        ===IP===
+        """
+
+        let status = ADBFileProvider.parseDeviceStatusOutput(output, serial: "192.168.1.99:41234")
+        XCTAssertEqual(status.batteryLevel, 19)
+        XCTAssertEqual(status.chargingState, .discharging)
+        let temp = try XCTUnwrap(status.batteryTempCelsius)
+        XCTAssertEqual(temp, 29.0, accuracy: 0.01)
+        XCTAssertEqual(status.networkType, .cellular5G)
+        XCTAssertNil(status.wifiSSID)
+        XCTAssertEqual(status.ipAddress, "192.168.1.99")
+        XCTAssertEqual(status.androidVersion, "Android 16")
+    }
+
+    @MainActor
+    func testAppStateRefreshesAndClearsDeviceStatus() async throws {
+        let deviceID = DeviceID(rawValue: "wifi:test-phone")
+        let expectedStatus = DeviceStatusInfo(
+            batteryLevel: 88,
+            chargingState: .charging,
+            batteryTempCelsius: 31.0,
+            networkType: .wifi,
+            wifiSSID: "HomeNet",
+            ipAddress: "192.168.1.25",
+            androidVersion: "Android 15",
+            connectionDetail: "Wi-Fi 无线调试 (ADB)",
+            updatedAt: Date()
+        )
+        let fake = FakeFileProvider(
+            directories: [1: ["/": []]],
+            stubbedDeviceStatus: expectedStatus
+        )
+        let backend = FakeDeviceBackend()
+        backend.register(provider: fake, for: deviceID)
+
+        let manager = DeviceManager(backend: backend)
+        let appState = AppState(deviceManager: manager)
+        appState.start()
+        defer { appState.stop() }
+
+        let info = DeviceInfo(
+            id: deviceID,
+            name: "OnePlus 13T",
+            manufacturer: "OnePlus",
+            model: "PKX110",
+            serialNumber: "192.168.1.25:38421",
+            transport: .wifi
+        )
+        backend.emit(.attached(info))
+        backend.emit(.stateChanged(deviceID, .ready))
+        try await waitUntil { appState.currentDeviceStatus != nil }
+
+        XCTAssertEqual(appState.currentDeviceStatus?.batteryLevel, 88)
+        XCTAssertEqual(appState.currentDeviceStatus?.networkType, .wifi)
+        XCTAssertEqual(appState.currentDeviceStatus?.wifiSSID, "HomeNet")
+
+        backend.emit(.stateChanged(deviceID, .locked))
+        try await waitUntil { appState.effectiveDeviceState == .locked && appState.currentDeviceStatus == nil }
+        XCTAssertNil(appState.currentDeviceStatus)
+    }
 }

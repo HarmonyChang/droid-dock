@@ -47,6 +47,10 @@ actor DeviceSession {
         try await run { try await provider.makeDirectory(name, in: dir, storage: storage) }
     }
 
+    func deviceStatus() async throws -> DeviceStatusInfo? {
+        try await run { try await provider.deviceStatus() }
+    }
+
     private func run<T: Sendable>(_ operation: () async throws -> T) async throws -> T {
         try Task.checkCancellation()
         if isDisconnected {

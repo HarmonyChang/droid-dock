@@ -4,12 +4,12 @@
 
 ## 当前状态
 
-- 当前阶段：**真机体验专项优化完成并重新打包 -- 解决双击看图模糊（原图预览抢占通道、MTP 取消安全排空管道、6144 px 高清预解码与高插值渲染）、在查看器右上角新增半透明照片信息浮窗（尺寸/格式/相机镜头/EXIF 曝光参数/拍摄时间/色彩/GPS/路径），并将相册网格滑动缩略图升级为 LIFO 可见优先 + 128 KB 局部 EXIF 提取 + 独立单元格预解码位图缓存；`USBMTPTests`（12/12）与 `DroidDockTests`（22/22）全部通过，0 Swift 编译警告**
+- 当前阶段：**`v0.2.0` 版本记录与应用内自动升级体系完成并通过 Release 部署 -- 新增 [CHANGELOG.md](CHANGELOG.md)、`SemanticVersion` 语义化比较、`AppUpdateService`（GitHub Releases API 检查、流式下载 + SHA-256 与 `codesign` 校验、备份与回滚安全自动替换重启）及 `AppUpdateSheetView`；`USBMTPTests`（15/15）与 `DroidDockTests`（31/31）全部通过，0 Swift 编译器警告；已更新部署 `/Applications/DroidDock.app`（`0.2.0 (2)`，PID `5270` 运行中）并生成 [dist/DroidDock-0.2.0-arm64.dmg](dist/DroidDock-0.2.0-arm64.dmg) 与 `.sha256`**
 - 代码与产物：
-  - [MTPSession.swift](Packages/USBMTP/Sources/USBMTP/MTPSession.swift) + [MTPProvider.swift](DroidDock/Device/MTP/MTPProvider.swift) + [DeviceSession.swift](DroidDock/Device/DeviceSession.swift)：修复 `withTransactionLock` 取消唤醒漏接力隐患；`downloadObject` 小中体积事务取消时先安全排空残余字节与 12 B 响应包避免污染后续 USB 会话；支持 `MTPObjectInfo` 缓存与 128 KB `GetPartialObject` 内嵌 EXIF 缩略图提取。
-  - [ThumbnailPipeline.swift](DroidDock/Services/ThumbnailPipeline.swift) + [BrowserModel.swift](DroidDock/App/BrowserModel.swift)：新增 LIFO（最新可见单元格优先）设备队列、预览下载抢占暂停后台缩略图、`SendableImageCache` 后台位图解码缓存、`PhotoMetadata` EXIF 提取与相邻照片静默预取；整文件下载兜底缩窄至照片 4 MB / 视频 2 MB。
-  - [PhotoPreviewView.swift](DroidDock/UI/PhotoPreviewView.swift) + [BrowserContentView.swift](DroidDock/UI/BrowserContentView.swift)：双击查看器支持高分辨率解码渲染、清晰失败提示、顶部「信息」开关与右上角 `PhotoMetadataOverlayCard` 拍摄参数浮窗；网格单元格拆分为独立 `NodeThumbnailView` 消除全局刷新重解卡顿。
-- 下一步：由用户在已重启的 Release 版 [dist/DroidDock.app](dist/DroidDock.app)（PID `53776` 运行中）复测双击看图清晰度、右上角照片信息卡片及相册快速滑动出图速度。
+  - [CHANGELOG.md](CHANGELOG.md) + [scripts/package-app.sh](scripts/package-app.sh) + [project.pbxproj](DroidDock.xcodeproj/project.pbxproj)：维护 `v0.1.0` ~ `v0.2.0` 完整变更日志，主版本号升级至 `0.2.0`（Build `2`），打包脚本自动读取版本号并输出 `.dmg.sha256` 校验文件。
+  - [AppUpdateService.swift](DroidDock/Services/AppUpdateService.swift) + [AppUpdateSheetView.swift](DroidDock/UI/AppUpdateSheetView.swift)：零第三方依赖对接 `HarmonyChang/droid-dock` GitHub Releases，支持启动定时静默检查、手动检查、跳过版本、下载进度显示、SHA-256 + `codesign` 校验、`hdiutil` 挂盘/解包与传输活跃期间升级拦截。
+  - [AppState.swift](DroidDock/App/AppState.swift) + [DroidDockApp.swift](DroidDock/App/DroidDockApp.swift) + [MainWindowView.swift](DroidDock/UI/MainWindowView.swift) + [SidebarView.swift](DroidDock/UI/SidebarView.swift)：菜单栏新增「检查更新… / 版本记录…」，边栏品牌标题旁展示可点击 `v0.2.0`（发现新版本时高亮为「新版本」）徽标。
+- 下一步：由用户在已启动的 `/Applications/DroidDock.app`（`v0.2.0` Build `2`，PID `5270` 运行中）查看版本记录与检查更新界面；确认无误后按指令提交、推送并在 GitHub Releases 上传安装包与 `.sha256`。
 
 ## 里程碑进度
 
@@ -41,6 +41,44 @@
 - 设计稿 HTML 为打包页面，未做视觉评审。
 
 ## 开发日志
+
+### 2026-11-24 21:02 -- 升级至 `v0.2.0`：新增版本记录（CHANGELOG）与应用内 GitHub Releases 自动升级能力
+- 新增能力：
+  1. **版本记录体系**：新增 [CHANGELOG.md](CHANGELOG.md) 与内置历史 `ChangelogEntry.bundledHistory`（覆盖 `0.2.0`、`0.1.1`、`0.1.0`），并将 Xcode `MARKETING_VERSION` 升至 `0.2.0`（Build `2`）；[scripts/package-app.sh](scripts/package-app.sh) 自动读取版本号并同步生成 `.dmg.sha256` 校验文件。
+  2. **零依赖自动升级服务**（[AppUpdateService.swift](DroidDock/Services/AppUpdateService.swift) ）：实现 `SemanticVersion` 解析、GitHub Releases 查询（`HarmonyChang/droid-dock`，404 尚未发版时优雅提示）、`URLSession` 后台流式下载并计算 `CryptoKit.SHA256`、`hdiutil attach` 自动挂载 `.dmg` 与 `codesign --verify --deep --strict` 验签、`Bundle.bundleIdentifier` 校验，以及带老版本备份与失败回滚机制的自替换重启脚本（明确拦截活跃传输期升级）。
+  3. **版本与升级 UI 集成**（[AppUpdateSheetView.swift](DroidDock/UI/AppUpdateSheetView.swift)、[SidebarView.swift](DroidDock/UI/SidebarView.swift)、[DroidDockApp.swift](DroidDock/App/DroidDockApp.swift)、[MainWindowView.swift](DroidDock/UI/MainWindowView.swift)、[AppState.swift](DroidDock/App/AppState.swift) ）：菜单栏支持「检查更新… / 版本记录…」，边栏品牌区新增版本徽标与新版本高亮，应用启动后 3 秒（6 小时频控）按开关静默检查更新。
+- 验证与部署（2026-11-24 21:02）：
+  - 非测试代码 0 `!` 强制解包，`USBMTP` 引入边界保持干净。
+  - `Packages/USBMTP` `swift test`：**15/15** 通过（0 警告）；`xcodebuild ... build test`：**31/31** 通过（0 Swift 编译器警告，含 [AppUpdateTests.swift](DroidDock/Tests/AppUpdateTests.swift) 4 项新增用例）。
+  - 执行 [scripts/package-app.sh](scripts/package-app.sh) 生成 [dist/DroidDock-0.2.0-arm64.dmg](dist/DroidDock-0.2.0-arm64.dmg)（2.9 MB）与 `.sha256`，替换 `/Applications/DroidDock.app` 并清理 `dist/DroidDock.app` 与临时目录，签名校验与版本号（`0.2.0` Build `2`）验证通过，已启动 `/Applications/DroidDock.app`（PID `5270` 运行中）。
+
+### 2026-11-24 20:25 -- 新增手机状态与详情展示（电量、网络方式、系统与链路信息）并安全隔离测试宿主
+- 改动与功能：
+  1. **测试宿主 USB 隔离**：[DroidDockApp.swift](DroidDock/App/DroidDockApp.swift) 在 `.task` 入口校验 `XCTestConfigurationFilePath == nil`，运行单元测试期间不启动 `AppState` / `MTPDeviceBackend`，彻底避免抢占运行中应用的 USB 连接。
+  2. **USB MTP 状态与速率扩展**：[MTPCodec.swift](Packages/USBMTP/Sources/USBMTP/MTPCodec.swift)、[MTPSession.swift](Packages/USBMTP/Sources/USBMTP/MTPSession.swift)、[IOUSBHostTransport.swift](Packages/USBMTP/Sources/USBMTP/IOUSBHostTransport.swift) 新增标准 `GetDevicePropValue`（`0x1015`）与 `BatteryLevel`（`0x5001`）查询能力，解析 `devicePropertiesSupported`，并从 IORegistry 读取 `USBSpeed` 生成 USB 链路速率描述。
+  3. **跨协议状态模型与采集**：[FileProvider.swift](DroidDock/Device/FileProvider.swift)、[DeviceSession.swift](DroidDock/Device/DeviceSession.swift)、[MTPProvider.swift](DroidDock/Device/MTP/MTPProvider.swift)、[ADBProvider.swift](DroidDock/Device/ADB/ADBProvider.swift) 新增 `DeviceStatusInfo`；USB MTP 模式按能力安全探测电池电量与 USB 速率；无线 ADB 模式单次轻量级 `shell` 命令综合读取电量/充放电状态/电池温度、`Android` 版本、Wi-Fi 与 SSID / 5G / 4G / 3G / 无网络状态及局域网 IPv4。
+  4. **边栏状态胶囊、详情浮窗与传输保护**：[AppState.swift](DroidDock/App/AppState.swift) 增加设备就绪时拉取、60s 定时刷新（传输活跃时自动跳过）及断线/锁屏自动清理；[SidebarView.swift](DroidDock/UI/SidebarView.swift) 新增紧凑电量/网络/USB 链路胶囊与 `DeviceDetailsPopoverView` 详情浮窗（含点击复制 IP 与序列号、存储概览、手动刷新按钮）；[DiagnosticsService.swift](DroidDock/Support/DiagnosticsService.swift) 同步写入设备状态摘要。
+- 验证（2026-11-24 20:25）：
+  - 非测试代码 0 `!` 强制解包，`USBMTP` 边界未越界。
+  - `Packages/USBMTP` `swift test`：**15/15** 全部通过（0 警告，新增 `testDeviceInfoParsesDevicePropertiesSupported` 与 `testBatteryLevelReadsValidAndHandlesUnsupported`）。
+  - `xcodebuild -project DroidDock.xcodeproj -scheme DroidDock -destination 'platform=macOS,arch=arm64' build test`：**27/27** 全部通过（0 Swift 编译器警告，在 [FakeFileProvider.swift](DroidDock/Tests/FakeFileProvider.swift) 与 [BrowserAndDeviceTests.swift](DroidDock/Tests/BrowserAndDeviceTests.swift) 新增 `testADBParseDeviceStatusWiFiAndCharging`、`testADBParseDeviceStatusCellular5GAndDischarging`、`testAppStateRefreshesAndClearsDeviceStatus`）。
+- 部署（2026-11-24 20:52）：
+  - 确认用户 40 GB 传输完成后，执行 `scripts/package-app.sh` 生成 Release 构建与 2.7 MB [dist/DroidDock-0.1.0-arm64.dmg](dist/DroidDock-0.1.0-arm64.dmg)，更新 `/Applications/DroidDock.app` 并清理 `dist/DroidDock.app` 与 `/tmp/droiddock-release-build`，`codesign --verify --deep --strict /Applications/DroidDock.app` 通过；已重启 `/Applications/DroidDock.app`（PID `99869` 运行中）。
+
+### 2026-11-24 19:33 -- 修复 40 GB / 15 万文件目录上传首屏假死、中途 USB ZLP 卡死与误报断开问题
+- 根因定位：
+  1. **USB High-Speed 512 字节对齐缺少 ZLP + 超时误判为永久断线**：OnePlus 真机 USB 2.0 Bulk-OUT 端点 `wMaxPacketSize = 512`。当 MTP 发送容器总长度（12 字节头 + Payload）恰好是 512 的整数倍时（例如上传 500 B 或 65,524 B 文件，平均每约 512 个文件必中一次，实测第 40 个文件命中），Android `MtpFfsHandle::receiveFile` 会一直阻塞等待 Zero-Length Packet（ZLP），触发原先 10s I/O 超时后，[MTPProvider.swift](DroidDock/Device/MTP/MTPProvider.swift) 将超时错误映射为 `.disconnected`，引发 [DeviceManager.swift](DroidDock/Device/DeviceManager.swift) `markDisconnected` 直接清空连接，`TransferQueue` 将剩余 155,336 项一次性全部标为失败；同时 `MTPDeviceBackend.refresh()` 未淘汰已失效的 `.ready` 句柄，导致无法自动恢复。
+  2. **入队与 UI 更新 $O(N^2)$ 假死**：原先 `TransferQueue.enqueueUploads` 在启动传输前同步递归遍历 155,375 个文件，未给出任何“扫描中”状态；`scheduleNextIfNeeded`、进度更新与 `buildSnapshot` 每 80 ms 复制/扫描全部 15 万条 `TransferTask`，`TransferModel.overallProgress` 与 `TransferTrayView` 每帧全量扫描并过滤数组。
+  3. **目录轮询与后台抢占风暴**：每个文件上传前均重复逐级 `ensureRemoteDirectory` + `session.list`（15 万文件产生 60 万+ 次 MTP 往返），且每传完 1 个文件就触发一次 `browser.reload()`。
+- 核心修复：
+  1. **USB ZLP 与错误恢复**：[IOUSBHostTransport.swift](Packages/USBMTP/Sources/USBMTP/IOUSBHostTransport.swift)、[MTPSession.swift](Packages/USBMTP/Sources/USBMTP/MTPSession.swift)、[MTPCodec.swift](Packages/USBMTP/Sources/USBMTP/MTPCodec.swift) 补发 512 B/MPS 边界 ZLP、超时放宽至 30s/60s 并细分 `.timeout` / `.busy`；[FileProvider.swift](DroidDock/Device/FileProvider.swift)、[DeviceManager.swift](DroidDock/Device/DeviceManager.swift)、[MTPProvider.swift](DroidDock/Device/MTP/MTPProvider.swift) 保留瞬时超时重试机会并实现 `invalidateAndReconnect` 强制重建失效连接。
+  2. **10 万级队列流畅架构**：[TransferQueue.swift](DroidDock/Services/TransferQueue.swift) 改为后台 `AsyncStream` 每批 500 项流式扫盘 + 即时启动传输；全路径替换为 `taskIndexByID` 字典、`queueSearchCursor` 游标、增量 `settledBytes`/`totalPlannedBytes`、`ensuredDirectories` 与 `cachedRemoteDirectories` 目录缓存；快照 10 Hz 节流且超 400 条自动窗口化为 300 条重点条目；整批上传完毕后再触发 1 次 `browser.reload()`。
+  3. **UI 状态反馈与防休眠**：[TransferModel.swift](DroidDock/App/TransferModel.swift) 与 [TransferTrayView.swift](DroidDock/UI/TransferTrayView.swift) 增加 `isPreparing` / 扫描实时计数展示，通过 `ProcessInfo.processInfo.beginActivity` 在传输期间防止 App Nap 与系统空闲休眠；[AppState.swift](DroidDock/App/AppState.swift)、[BrowserModel.swift](DroidDock/App/BrowserModel.swift)、[ThumbnailPipeline.swift](DroidDock/Services/ThumbnailPipeline.swift) 在传输期间暂停后台缩略图 USB 拉取。
+- 验证（2026-11-24 19:33）：
+  - 非测试代码（除 Apple `QLPreviewPanelDataSource` 协议签名外）零 `!` 强制解包，`USBMTP` 仅在 `DroidDock/Device/MTP/` 引入。
+  - `Packages/USBMTP` `swift test`：**13/13** 全部通过（0 警告，含新增 `testUploadObjectSendsZLPOnMaxPacketSizeBoundary` 覆盖 500 B / 65,524 B ZLP 发送）。
+  - `xcodebuild -project DroidDock.xcodeproj -scheme DroidDock -destination 'platform=macOS,arch=arm64' build test`：**24/24** 全部通过（0 Swift 编译器警告，含新增 `testUploadDirectoryCachesRemoteListingsAndCompletesBatch` 与 `testLargeBatchUploadWindowingAndCompletion` 500 文件窗口化测试）。
+  - 执行 `scripts/package-app.sh` 生成 Release 构建与 [dist/DroidDock-0.1.0-arm64.dmg](dist/DroidDock-0.1.0-arm64.dmg)，部署更新 `/Applications/DroidDock.app` 并清理多余 `.app` 构建副本，`codesign --verify --deep --strict /Applications/DroidDock.app` 通过；已启动 `/Applications/DroidDock.app`（PID `58945` 运行中）。
 
 ### 2026-11-17 21:31 -- 修复真机双击看图模糊、新增右上角照片信息卡片，并优化相册滑动缩略图加载速度
 - 根因与修复（根据真机实测反馈）：

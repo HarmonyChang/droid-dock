@@ -80,6 +80,39 @@ enum DeviceEvent: Sendable {
     case stateChanged(DeviceID, DeviceState)
 }
 
+struct DeviceStatusInfo: Sendable, Equatable {
+    enum ChargingState: String, Sendable, Equatable {
+        case charging = "充电中"
+        case full = "已充满"
+        case discharging = "使用电池"
+        case unknown = "未上报"
+    }
+
+    enum NetworkType: String, Sendable, Equatable {
+        case wifi = "Wi-Fi"
+        case cellular5G = "5G"
+        case cellular4G = "4G"
+        case cellular3G = "3G"
+        case cellular = "蜂窝网络"
+        case ethernet = "有线网络"
+        case offline = "无网络"
+        case unavailable = "未知"
+    }
+
+    let batteryLevel: Int?
+    let chargingState: ChargingState
+    let batteryTempCelsius: Double?
+    let networkType: NetworkType
+    let wifiSSID: String?
+    let ipAddress: String?
+    let androidVersion: String?
+    let connectionDetail: String?
+    let updatedAt: Date
+}
+
+typealias BatteryChargingState = DeviceStatusInfo.ChargingState
+typealias DeviceNetworkType = DeviceStatusInfo.NetworkType
+
 protocol FileProvider: Sendable {
     func storages() async throws -> [StorageInfo]
     func list(dir: String, storage: UInt32) async throws -> [RemoteNode]
@@ -89,11 +122,16 @@ protocol FileProvider: Sendable {
     func upload(from url: URL, toDir: String, remoteName: String?, storage: UInt32, progress: @Sendable (UInt64) -> Void) async throws -> RemoteNode
     func delete(_ node: RemoteNode) async throws
     func makeDirectory(_ name: String, in dir: String, storage: UInt32) async throws
+    func deviceStatus() async throws -> DeviceStatusInfo?
 }
 
 extension FileProvider {
     func upload(from url: URL, toDir: String, storage: UInt32, progress: @Sendable (UInt64) -> Void) async throws -> RemoteNode {
         try await upload(from: url, toDir: toDir, remoteName: nil, storage: storage, progress: progress)
+    }
+
+    func deviceStatus() async throws -> DeviceStatusInfo? {
+        nil
     }
 }
 
@@ -101,4 +139,11 @@ protocol DeviceBackend: Sendable {
     func events() -> AsyncStream<DeviceEvent>
     func open(_ id: DeviceID) async throws -> any FileProvider
     func refresh() async
+    func invalidateAndReconnect(_ id: DeviceID) async
+}
+
+extension DeviceBackend {
+    func invalidateAndReconnect(_ id: DeviceID) async {
+        await refresh()
+    }
 }

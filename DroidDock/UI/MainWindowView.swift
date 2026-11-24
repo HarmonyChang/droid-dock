@@ -52,6 +52,9 @@ struct MainWindowView: View {
         .sheet(isPresented: $bindableState.showWirelessPairingSheet) {
             WirelessPairingSheetView(appState: appState)
         }
+        .sheet(isPresented: $bindableState.showUpdateSheet) {
+            AppUpdateSheetView(appState: appState)
+        }
     }
 
     private var keyboardShortcuts: some View {

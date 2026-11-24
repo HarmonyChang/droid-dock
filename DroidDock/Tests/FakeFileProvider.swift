@@ -10,6 +10,7 @@ actor FakeFileProvider: FileProvider {
     var nextError: Error?
     var transientFailureQueue: [Error] = []
     var downloadChunkDelayNanoseconds: UInt64 = 0
+    var stubbedDeviceStatus: DeviceStatusInfo?
     private var nextHandleID: UInt32 = 9000
     private(set) var recordedOperations: [String] = []
 
@@ -18,13 +19,19 @@ actor FakeFileProvider: FileProvider {
         directories: [UInt32: [String: [RemoteNode]]] = [:],
         thumbnails: [String: Data] = [:],
         filePayloads: [String: Data] = [:],
-        nextError: Error? = nil
+        nextError: Error? = nil,
+        stubbedDeviceStatus: DeviceStatusInfo? = nil
     ) {
         self.storagesList = storages
         self.directories = directories
         self.thumbnails = thumbnails
         self.filePayloads = filePayloads
         self.nextError = nextError
+        self.stubbedDeviceStatus = stubbedDeviceStatus
+    }
+
+    func setStubbedDeviceStatus(_ status: DeviceStatusInfo?) {
+        stubbedDeviceStatus = status
     }
 
     func setNextError(_ error: Error?) {
@@ -218,6 +225,14 @@ actor FakeFileProvider: FileProvider {
         if directories[storage]?[dirPath] == nil {
             directories[storage, default: [:]][dirPath] = []
         }
+    }
+
+    func deviceStatus() async throws -> DeviceStatusInfo? {
+        recordedOperations.append("deviceStatus")
+        if let nextError {
+            throw nextError
+        }
+        return stubbedDeviceStatus
     }
 }
 

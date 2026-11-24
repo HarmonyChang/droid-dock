@@ -16,14 +16,28 @@ public final class USBInterfaceCandidate: @unchecked Sendable {
     public let interfaceSubClass: Int
     public let interfaceProtocol: Int
     public let interfaceName: String
+    public let usbSpeed: Int?
 
     /// PTP/MTP 标准接口为 class 6 / subclass 1 / protocol 1；部分设备用厂商类并以接口名 "MTP" 标识。
     public var looksLikeMTP: Bool {
         (interfaceClass == 6 && interfaceSubClass == 1) || interfaceName.uppercased().contains("MTP")
     }
 
+    public var usbSpeedLabel: String? {
+        switch usbSpeed {
+        case 0: return "USB 1.0 低速"
+        case 1: return "USB 1.1 全速"
+        case 2: return "USB 2.0 高速"
+        case 3: return "USB 3.0 超高速"
+        case 4: return "USB 3.1 超高速+"
+        case 5: return "USB 3.2 超高速+"
+        default: return nil
+        }
+    }
+
     init(service: io_service_t, deviceName: String, vendorID: Int, productID: Int, serial: String, locationID: Int,
-         interfaceNumber: Int, interfaceClass: Int, interfaceSubClass: Int, interfaceProtocol: Int, interfaceName: String) {
+         interfaceNumber: Int, interfaceClass: Int, interfaceSubClass: Int, interfaceProtocol: Int, interfaceName: String,
+         usbSpeed: Int? = nil) {
         self.service = service
         self.deviceName = deviceName
         self.vendorID = vendorID
@@ -35,6 +49,7 @@ public final class USBInterfaceCandidate: @unchecked Sendable {
         self.interfaceSubClass = interfaceSubClass
         self.interfaceProtocol = interfaceProtocol
         self.interfaceName = interfaceName
+        self.usbSpeed = usbSpeed
     }
 
     deinit { IOObjectRelease(service) }
@@ -58,6 +73,7 @@ public enum USBEnumerator {
             var parent: io_registry_entry_t = 0
             var name = "", serial = ""
             var vid = 0, pid = 0
+            var usbSpeed: Int? = nil
             var locationID = (prop(service, "locationID") as? Int) ?? 0
             if IORegistryEntryGetParentEntry(service, kIOServicePlane, &parent) == KERN_SUCCESS {
                 name = (prop(parent, "USB Product Name") as? String) ?? (prop(parent, "kUSBProductString") as? String) ?? ""
@@ -71,6 +87,7 @@ public enum USBEnumerator {
                 serial = (prop(parent, "USB Serial Number") as? String) ?? (prop(parent, "kUSBSerialNumberString") as? String) ?? ""
                 vid = (prop(parent, "idVendor") as? Int) ?? 0
                 pid = (prop(parent, "idProduct") as? Int) ?? 0
+                usbSpeed = (prop(parent, "USBSpeed") as? Int) ?? (prop(parent, "Device Speed") as? Int)
                 if locationID == 0 {
                     locationID = (prop(parent, "locationID") as? Int) ?? 0
                 }
@@ -82,7 +99,8 @@ public enum USBEnumerator {
                 interfaceClass: (prop(service, "bInterfaceClass") as? Int) ?? -1,
                 interfaceSubClass: (prop(service, "bInterfaceSubClass") as? Int) ?? -1,
                 interfaceProtocol: (prop(service, "bInterfaceProtocol") as? Int) ?? -1,
-                interfaceName: (prop(service, "USB Interface Name") as? String) ?? (prop(service, "kUSBString") as? String) ?? ""))
+                interfaceName: (prop(service, "USB Interface Name") as? String) ?? (prop(service, "kUSBString") as? String) ?? "",
+                usbSpeed: usbSpeed))
         }
         return result
     }
@@ -179,13 +197,15 @@ public final class IOUSBHostTransport: MTPTransport, @unchecked Sendable {
     private let interface: IOUSBHostInterface
     private let bulkIn: IOUSBHostPipe
     private let bulkOut: IOUSBHostPipe
-    private let timeout: TimeInterval = 10
+    public let maxOutPacketSize: Int
+    private let timeout: TimeInterval = 30
 
     /// 打开接口并定位 Bulk 端点；同时尝试锁定父级 `IOUSBHostDevice`，防止第三方守护进程（如 `O+Connect Service`）
     /// 下发 AOA 模式切换导致设备回落仅充电；若接口被 `ptpcamerad` 独占则自动结束该用户态进程后重试接管。
     public init(candidate: USBInterfaceCandidate) throws {
         let iface = try Self.openInterface(candidate: candidate)
         var inAddr: Int?, outAddr: Int?
+        var outMaxPacket = 512
         let config = iface.configurationDescriptor
         let ifDesc = iface.interfaceDescriptor
         var current: UnsafePointer<IOUSBDescriptorHeader>? = nil
@@ -193,8 +213,15 @@ public final class IOUSBHostTransport: MTPTransport, @unchecked Sendable {
             let ep = next.pointee
             let isBulk = (ep.bmAttributes & 0x03) == 0x02
             if isBulk {
-                if ep.bEndpointAddress & 0x80 != 0 { inAddr = inAddr ?? Int(ep.bEndpointAddress) }
-                else { outAddr = outAddr ?? Int(ep.bEndpointAddress) }
+                if ep.bEndpointAddress & 0x80 != 0 {
+                    inAddr = inAddr ?? Int(ep.bEndpointAddress)
+                } else {
+                    if outAddr == nil {
+                        outAddr = Int(ep.bEndpointAddress)
+                        let mps = Int(ep.wMaxPacketSize) & 0x07FF
+                        if mps > 0 { outMaxPacket = mps }
+                    }
+                }
             }
             current = UnsafeRawPointer(next).assumingMemoryBound(to: IOUSBDescriptorHeader.self)
         }
@@ -209,6 +236,7 @@ public final class IOUSBHostTransport: MTPTransport, @unchecked Sendable {
             iface.destroy()
             throw error
         }
+        maxOutPacketSize = outMaxPacket
         interface = iface
         var parent: io_registry_entry_t = 0
         if IORegistryEntryGetParentEntry(iface.ioService, kIOServicePlane, &parent) == KERN_SUCCESS {
@@ -266,19 +294,74 @@ public final class IOUSBHostTransport: MTPTransport, @unchecked Sendable {
 
     public func send(_ data: Data) async throws {
         try await onQueue {
-            let buf = NSMutableData(data: data)
-            var sent = 0
-            try self.bulkOut.__sendIORequest(with: buf, bytesTransferred: &sent, completionTimeout: self.timeout)
+            if data.isEmpty {
+                // 当 USB Data Container 总长度恰为 wMaxPacketSize 整数倍时发送 ZLP，通知手机 FunctionFS 结束本次发送
+                let emptyBuf = NSMutableData()
+                var sent = 0
+                do {
+                    try self.bulkOut.__sendIORequest(with: emptyBuf, bytesTransferred: &sent, completionTimeout: self.timeout)
+                } catch {
+                    throw self.translateIOError(error, pipe: self.bulkOut, direction: "Bulk-OUT ZLP")
+                }
+                return
+            }
+            var offset = 0
+            while offset < data.count {
+                let slice = offset == 0 ? data : Data(data.dropFirst(offset))
+                let buf = NSMutableData(data: slice)
+                var sent = 0
+                do {
+                    try self.bulkOut.__sendIORequest(with: buf, bytesTransferred: &sent, completionTimeout: self.timeout)
+                } catch {
+                    throw self.translateIOError(error, pipe: self.bulkOut, direction: "Bulk-OUT")
+                }
+                guard sent > 0 else {
+                    throw MTPError.transport("USB Bulk-OUT 发送返回 0 字节")
+                }
+                offset += sent
+            }
         }
     }
 
     public func receive(maxLength: Int) async throws -> Data {
-        try await onQueue {
+        try await receive(maxLength: maxLength, timeout: nil)
+    }
+
+    public func receive(maxLength: Int, timeout: TimeInterval?) async throws -> Data {
+        let effectiveTimeout = timeout ?? self.timeout
+        return try await onQueue {
             let buf = NSMutableData(length: maxLength) ?? NSMutableData()
             var got = 0
-            try self.bulkIn.__sendIORequest(with: buf, bytesTransferred: &got, completionTimeout: self.timeout)
+            do {
+                try self.bulkIn.__sendIORequest(with: buf, bytesTransferred: &got, completionTimeout: effectiveTimeout)
+            } catch {
+                throw self.translateIOError(error, pipe: self.bulkIn, direction: "Bulk-IN")
+            }
             return Data(bytes: buf.bytes, count: got)
         }
+    }
+
+    private func translateIOError(_ error: Error, pipe: IOUSBHostPipe, direction: String) -> Error {
+        let nsError = error as NSError
+        guard nsError.domain == IOUSBHostErrorDomain else {
+            return error
+        }
+        let code = Int32(truncatingIfNeeded: nsError.code)
+        let hexCode = String(format: "0x%08X", UInt32(bitPattern: code))
+        let usbTransactionTimeout = Int32(bitPattern: 0xE000_4051)
+        let usbPipeStalled = Int32(bitPattern: 0xE000_404F)
+
+        if code == kIOReturnTimeout || code == usbTransactionTimeout {
+            return MTPError.timeout("\(direction) 传输超时（\(hexCode)）")
+        }
+        if code == usbPipeStalled {
+            try? pipe.clearStall()
+            return MTPError.busy("\(direction) 管道 Stall 已自动恢复（\(hexCode)）")
+        }
+        if code == kIOReturnAborted || code == kIOReturnBusy || code == kIOReturnExclusiveAccess || code == kIOReturnInternalError {
+            return MTPError.busy("\(direction) 通道暂忙或中止（\(hexCode)）")
+        }
+        return MTPError.transport("\(direction) 底层中断（\(hexCode)：\(nsError.localizedDescription)）")
     }
 
     private func onQueue<T: Sendable>(_ work: @escaping @Sendable () throws -> T) async throws -> T {

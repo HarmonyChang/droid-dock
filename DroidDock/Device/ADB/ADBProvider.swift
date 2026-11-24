@@ -212,7 +212,207 @@ actor ADBFileProvider: FileProvider {
         }
     }
 
+    func deviceStatus() async throws -> DeviceStatusInfo? {
+        let script = [
+            "echo '===BATTERY==='; dumpsys battery 2>/dev/null || true",
+            "echo '===ANDROID_VER==='; getprop ro.build.version.release 2>/dev/null || true",
+            "echo '===WIFI==='; dumpsys wifi 2>/dev/null | grep -E 'Wi-Fi is|mNetworkInfo|SSID:' | head -n 25 || true",
+            "echo '===CONN==='; dumpsys connectivity 2>/dev/null | grep -E 'Active default network|NetworkAgentInfo|Transports:|type: WIFI|type: MOBILE|CONNECTED' | head -n 20 || true",
+            "echo '===TELEPHONY==='; dumpsys telephony.registry 2>/dev/null | grep -E 'mDataConnectionState|mDataNetworkType|mServiceState|overrideNetworkType|nrState' | head -n 15 || true",
+            "echo '===IP==='; ip -o -4 addr show wlan0 2>/dev/null || ifconfig wlan0 2>/dev/null || true",
+        ].joined(separator: "; ")
+
+        do {
+            let output = try await client.run(["-s", serial, "shell", script], timeout: 8)
+            return Self.parseDeviceStatusOutput(output, serial: serial)
+        } catch let error as CancellationError {
+            throw error
+        } catch {
+            throw Self.mapError(error)
+        }
+    }
+
     // MARK: - 输出解析与错误映射
+
+    nonisolated static func parseDeviceStatusOutput(_ output: String, serial: String) -> DeviceStatusInfo {
+        var sections: [String: [String]] = [:]
+        var currentSection = ""
+        for rawLine in output.split(whereSeparator: \.isNewline) {
+            let line = String(rawLine)
+            let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+            if trimmed.hasPrefix("===") && trimmed.hasSuffix("===") && trimmed.count > 6 {
+                currentSection = String(trimmed.dropFirst(3).dropLast(3))
+                sections[currentSection, default: []] = []
+                continue
+            }
+            sections[currentSection, default: []].append(line)
+        }
+
+        // 1. 电池信息
+        var batteryLevel: Int?
+        var statusCode: Int?
+        var acPowered = false
+        var usbPowered = false
+        var wirelessPowered = false
+        var batteryTemp: Double?
+
+        for rawLine in sections["BATTERY"] ?? [] {
+            let parts = rawLine.split(separator: ":", maxSplits: 1, omittingEmptySubsequences: false)
+            guard parts.count == 2 else { continue }
+            let key = parts[0].trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            let val = parts[1].trimmingCharacters(in: .whitespacesAndNewlines)
+            switch key {
+            case "level":
+                if let lvl = Int(val), (0...100).contains(lvl) {
+                    batteryLevel = lvl
+                }
+            case "status":
+                statusCode = Int(val)
+            case "ac powered":
+                acPowered = val.lowercased() == "true"
+            case "usb powered":
+                usbPowered = val.lowercased() == "true"
+            case "wireless powered":
+                wirelessPowered = val.lowercased() == "true"
+            case "temperature":
+                if let tenths = Int(val), (-200...1000).contains(tenths) {
+                    batteryTemp = Double(tenths) / 10.0
+                }
+            default:
+                break
+            }
+        }
+
+        let chargingState: BatteryChargingState
+        switch statusCode {
+        case 2:
+            chargingState = .charging
+        case 5:
+            chargingState = .full
+        case 3, 4:
+            chargingState = .discharging
+        default:
+            if acPowered || usbPowered || wirelessPowered {
+                chargingState = batteryLevel == 100 ? .full : .charging
+            } else if batteryLevel != nil {
+                chargingState = .discharging
+            } else {
+                chargingState = .unknown
+            }
+        }
+
+        // 2. 系统版本
+        let verRaw = (sections["ANDROID_VER"] ?? [])
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .first { !$0.isEmpty }
+        let androidVersion = verRaw.map { "Android \($0)" }
+
+        // 3. Wi-Fi SSID 与网络状态
+        let wifiText = (sections["WIFI"] ?? []).joined(separator: "\n")
+        let connText = (sections["CONN"] ?? []).joined(separator: "\n")
+        let telText = (sections["TELEPHONY"] ?? []).joined(separator: "\n")
+
+        let wifiSSID = extractWiFiSSID(from: wifiText)
+        let wifiConnectedInWifiDump = wifiText.contains("CONNECTED/CONNECTED")
+            || wifiText.contains("state: CONNECTED")
+            || (wifiText.contains("Wi-Fi is enabled") && wifiSSID != nil)
+        let connLower = connText.lowercased()
+        let connHasWiFi = (connText.contains("type: WIFI") && connText.contains("CONNECTED"))
+            || (connText.contains("Transports: WIFI") && (connText.contains("CONNECTED") || connText.contains("VALIDATED")))
+        let connHasEthernet = (connText.contains("type: ETHERNET") && connText.contains("CONNECTED"))
+            || (connText.contains("Transports: ETHERNET") && connText.contains("CONNECTED"))
+        let connHasCellular = (connText.contains("type: MOBILE") && connText.contains("CONNECTED"))
+            || (connText.contains("Transports: CELLULAR") && (connText.contains("CONNECTED") || connText.contains("VALIDATED")))
+        let telUpper = telText.uppercased()
+        let telConnected = telText.contains("mDataConnectionState=2")
+
+        let networkType: DeviceNetworkType
+        if connHasWiFi || (wifiConnectedInWifiDump && !connHasCellular && !connHasEthernet) {
+            networkType = .wifi
+        } else if connHasEthernet {
+            networkType = .ethernet
+        } else if connHasCellular || telConnected {
+            if telUpper.contains("NR") || telUpper.contains("5G") || telText.contains("dataNetworkType=20") || telText.contains("mDataNetworkType=20") {
+                networkType = .cellular5G
+            } else if telUpper.contains("LTE") || telText.contains("dataNetworkType=13") || telText.contains("mDataNetworkType=13") || telText.contains("dataNetworkType=19") {
+                networkType = .cellular4G
+            } else if telUpper.contains("UMTS") || telUpper.contains("HSPA") || telUpper.contains("HSDPA") || telText.contains("dataNetworkType=3") || telText.contains("dataNetworkType=15") {
+                networkType = .cellular3G
+            } else {
+                networkType = .cellular
+            }
+        } else if connLower.contains("active default network: none") || !connText.isEmpty || !wifiText.isEmpty {
+            networkType = .offline
+        } else {
+            networkType = .unavailable
+        }
+
+        // 4. 局域网 IPv4
+        let ipSection = (sections["IP"] ?? []).joined(separator: "\n")
+        let parsedIP = extractIPv4(from: ipSection) ?? extractIPv4FromSerial(serial)
+
+        return DeviceStatusInfo(
+            batteryLevel: batteryLevel,
+            chargingState: chargingState,
+            batteryTempCelsius: batteryTemp,
+            networkType: networkType,
+            wifiSSID: networkType == .wifi ? wifiSSID : nil,
+            ipAddress: parsedIP,
+            androidVersion: androidVersion,
+            connectionDetail: "Wi-Fi 无线调试 (ADB)",
+            updatedAt: Date()
+        )
+    }
+
+    private nonisolated static func extractWiFiSSID(from text: String) -> String? {
+        for rawLine in text.split(whereSeparator: \.isNewline) {
+            let line = String(rawLine)
+            guard let range = line.range(of: "SSID:") else { continue }
+            var tail = String(line[range.upperBound...]).trimmingCharacters(in: .whitespaces)
+            if tail.hasPrefix("\"") {
+                tail.removeFirst()
+                if let endQuote = tail.firstIndex(of: "\"") {
+                    tail = String(tail[..<endQuote])
+                }
+            } else if let comma = tail.range(of: ", BSSID:") {
+                tail = String(tail[..<comma.lowerBound])
+            } else if let comma = tail.firstIndex(of: ",") {
+                tail = String(tail[..<comma])
+            }
+            let cleaned = tail.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !cleaned.isEmpty && cleaned.lowercased() != "<unknown ssid>" && cleaned.lowercased() != "null" {
+                return cleaned
+            }
+        }
+        return nil
+    }
+
+    private nonisolated static func extractIPv4(from text: String) -> String? {
+        for rawLine in text.split(whereSeparator: \.isNewline) {
+            let line = rawLine.trimmingCharacters(in: .whitespacesAndNewlines)
+            if let inetRange = line.range(of: "inet addr:") {
+                let candidate = String(line[inetRange.upperBound...]).split(whereSeparator: \.isWhitespace).first.map(String.init) ?? ""
+                if isValidIPv4(candidate) { return candidate }
+            } else if let inetRange = line.range(of: "inet ") {
+                let token = String(line[inetRange.upperBound...]).split(whereSeparator: \.isWhitespace).first.map(String.init) ?? ""
+                let ip = token.split(separator: "/", maxSplits: 1).first.map(String.init) ?? ""
+                if isValidIPv4(ip) { return ip }
+            }
+        }
+        return nil
+    }
+
+    private nonisolated static func extractIPv4FromSerial(_ serial: String) -> String? {
+        guard let colon = serial.firstIndex(of: ":") else { return nil }
+        let host = String(serial[..<colon])
+        return isValidIPv4(host) ? host : nil
+    }
+
+    private nonisolated static func isValidIPv4(_ str: String) -> Bool {
+        let parts = str.split(separator: ".", omittingEmptySubsequences: false)
+        guard parts.count == 4 else { return false }
+        return parts.allSatisfy { Int($0).map { (0...255).contains($0) } ?? false }
+    }
 
     nonisolated static func parseDFOutput(_ output: String) -> StorageInfo {
         let lines = output.split(whereSeparator: \.isNewline).map(String.init)

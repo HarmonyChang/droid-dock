@@ -286,6 +286,107 @@ final class TransferTests: XCTestCase {
         XCTAssertFalse(browser.nodes.contains { $0.id == existingFile.id })
     }
 
+    func testUploadDirectoryCachesRemoteListingsAndCompletesBatch() async throws {
+        let storageID: UInt32 = 65537
+        let docsNode = RemoteNode(
+            id: "\(storageID):1",
+            storageID: storageID,
+            path: "/Documents",
+            name: "Documents",
+            isDirectory: true,
+            size: 0,
+            modified: Date(),
+            kind: .other
+        )
+        let provider = FakeFileProvider(directories: [
+            storageID: [
+                "/": [docsNode],
+                "/Documents": [],
+            ],
+        ])
+        let session = DeviceSession(provider: provider)
+        let queue = TransferQueue()
+
+        let counter = UploadCompletedCounter()
+        await queue.configureHandlers(
+            onSnapshot: { _ in },
+            onUploadCompleted: { Task { await counter.increment() } },
+            onDisconnect: { _ in }
+        )
+        await queue.attachSession(session, deviceID: DeviceID(rawValue: "fake-1"))
+
+        let batchDir = tempRoot.appendingPathComponent("BatchFolder", isDirectory: true)
+        try FileManager.default.createDirectory(at: batchDir, withIntermediateDirectories: true)
+        for index in 1...5 {
+            let fileURL = batchDir.appendingPathComponent("item\(index).txt")
+            try Data("payload-\(index)".utf8).write(to: fileURL)
+        }
+
+        _ = await queue.enqueueUploads(urls: [batchDir], toRemoteDir: "/Documents", storage: storageID)
+        try await waitUntilIdle(queue)
+        try await Task.sleep(nanoseconds: 50_000_000)
+
+        let snap = await queue.snapshot()
+        XCTAssertEqual(snap.completedCount, 5)
+        XCTAssertEqual(snap.failedCount, 0)
+        XCTAssertEqual(snap.overallProgress, 1.0, accuracy: 0.0001)
+
+        let ops = await provider.recordedOperations
+        XCTAssertEqual(ops.filter { $0 == "list:\(storageID):/Documents" }.count, 1)
+        XCTAssertEqual(ops.filter { $0 == "list:\(storageID):/Documents/BatchFolder" }.count, 1)
+
+        let completionCallbacks = await counter.value
+        XCTAssertEqual(completionCallbacks, 1)
+
+        let remoteFiles = try await provider.list(dir: "/Documents/BatchFolder", storage: storageID)
+        XCTAssertEqual(remoteFiles.count, 5)
+    }
+
+    func testLargeBatchUploadWindowingAndCompletion() async throws {
+        let storageID: UInt32 = 65537
+        let docsNode = RemoteNode(
+            id: "\(storageID):1",
+            storageID: storageID,
+            path: "/Documents",
+            name: "Documents",
+            isDirectory: true,
+            size: 0,
+            modified: Date(),
+            kind: .other
+        )
+        let provider = FakeFileProvider(directories: [
+            storageID: [
+                "/": [docsNode],
+                "/Documents": [],
+            ],
+        ])
+        let session = DeviceSession(provider: provider)
+        let queue = TransferQueue()
+        await queue.attachSession(session, deviceID: DeviceID(rawValue: "fake-1"))
+
+        let largeDir = tempRoot.appendingPathComponent("LargeBatch", isDirectory: true)
+        try FileManager.default.createDirectory(at: largeDir, withIntermediateDirectories: true)
+        let smallPayload = Data("x".utf8)
+        for index in 0..<500 {
+            let fileURL = largeDir.appendingPathComponent(String(format: "file_%03d.txt", index))
+            try smallPayload.write(to: fileURL)
+        }
+
+        _ = await queue.enqueueUploads(urls: [largeDir], toRemoteDir: "/Documents", storage: storageID)
+        try await waitUntilIdle(queue, timeoutSeconds: 15)
+
+        let snap = await queue.snapshot()
+        XCTAssertEqual(snap.totalTaskCount, 500)
+        XCTAssertEqual(snap.nonCancelledCount, 500)
+        XCTAssertEqual(snap.completedCount, 500)
+        XCTAssertEqual(snap.failedCount, 0)
+        XCTAssertEqual(snap.tasks.count, 300)
+        XCTAssertEqual(snap.overallProgress, 1.0, accuracy: 0.0001)
+
+        let remoteFiles = try await provider.list(dir: "/Documents/LargeBatch", storage: storageID)
+        XCTAssertEqual(remoteFiles.count, 500)
+    }
+
     private func waitUntilIdle(_ queue: TransferQueue, timeoutSeconds: TimeInterval = 5) async throws {
         let deadline = Date().addingTimeInterval(timeoutSeconds)
         while Date() < deadline {
@@ -296,5 +397,12 @@ final class TransferTests: XCTestCase {
             try await Task.sleep(nanoseconds: 15_000_000)
         }
         XCTFail("传输队列在 \(timeoutSeconds)s 内未空闲")
+    }
+}
+
+private actor UploadCompletedCounter {
+    private(set) var value = 0
+    func increment() {
+        value += 1
     }
 }

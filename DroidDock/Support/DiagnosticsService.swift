@@ -26,7 +26,12 @@ enum DiagnosticsService {
             for dev in appState.deviceManager.devices {
                 let state = appState.deviceManager.deviceStates[dev.id]
                 let marker = dev.id == appState.deviceManager.selectedDeviceID ? " [当前选中]" : ""
-                lines.append("- \(dev.name)\(marker) | id=\(dev.id.rawValue) | manufacturer=\(dev.manufacturer) | model=\(dev.model) | state=\(String(describing: state))")
+                lines.append("- \(dev.name)\(marker) | id=\(dev.id.rawValue) | transport=\(dev.transport.rawValue) | manufacturer=\(dev.manufacturer) | model=\(dev.model) | state=\(String(describing: state))")
+            }
+            if let status = appState.currentDeviceStatus {
+                let bat = status.batteryLevel.map { "\($0)% (\(status.chargingState.rawValue))" } ?? "未知"
+                let net = status.wifiSSID.map { "\(status.networkType.rawValue) (\($0))" } ?? status.networkType.rawValue
+                lines.append("  状态摘要: 电量=\(bat) | 网络=\(net) | IP=\(status.ipAddress ?? "-") | 链路=\(status.connectionDetail ?? "-") | 版本=\(status.androidVersion ?? "-")")
             }
         }
         lines.append("")

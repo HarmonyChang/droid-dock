@@ -4,7 +4,8 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 PROJECT="$ROOT_DIR/DroidDock.xcodeproj"
 SCHEME="DroidDock"
-VERSION="${VERSION:-0.1.0}"
+DEFAULT_VERSION="$(grep -m1 'MARKETING_VERSION = ' "$PROJECT/project.pbxproj" | sed -E 's/.*MARKETING_VERSION = ([^;]+);.*/\1/' | tr -d '[:space:]' || true)"
+VERSION="${VERSION:-${DEFAULT_VERSION:-0.2.0}}"
 DERIVED_DATA="${DERIVED_DATA:-/tmp/droiddock-release-build}"
 DIST_DIR="$ROOT_DIR/dist"
 APP_OUT="$DIST_DIR/DroidDock.app"
@@ -27,7 +28,7 @@ if [ ! -d "$BUILT_APP" ]; then
   exit 1
 fi
 
-rm -rf "$APP_OUT" "$DMG_STAGING" "$DMG_OUT"
+rm -rf "$APP_OUT" "$DMG_STAGING" "$DMG_OUT" "${DMG_OUT}.sha256"
 mkdir -p "$DIST_DIR" "$DMG_STAGING"
 ditto "$BUILT_APP" "$APP_OUT"
 
@@ -52,6 +53,9 @@ hdiutil create \
   "$DMG_OUT"
 rm -rf "$DMG_STAGING"
 
+echo "==> Computing SHA-256 checksum..."
+(cd "$DIST_DIR" && shasum -a 256 "$(basename "$DMG_OUT")") > "${DMG_OUT}.sha256"
+
 if [ -n "${NOTARIZE_PROFILE:-}" ] && [ "$SIGN_IDENTITY" != "-" ]; then
   echo "==> Submitting DMG for notarization (profile: $NOTARIZE_PROFILE)..."
   xcrun notarytool submit "$DMG_OUT" --keychain-profile "$NOTARIZE_PROFILE" --wait
@@ -59,4 +63,4 @@ if [ -n "${NOTARIZE_PROFILE:-}" ] && [ "$SIGN_IDENTITY" != "-" ]; then
 fi
 
 echo "==> Packaging complete:"
-ls -lh "$APP_OUT" "$DMG_OUT"
+ls -lh "$APP_OUT" "$DMG_OUT" "${DMG_OUT}.sha256"

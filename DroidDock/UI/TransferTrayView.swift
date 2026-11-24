@@ -62,9 +62,9 @@ struct TransferTrayView: View {
     private var model: TransferModel { appState.transferModel }
 
     var body: some View {
-        let nonCancelled = model.tasks.filter { $0.state != .cancelled }
+        let total = model.nonCancelledCount
         let currentIndex = min(
-            nonCancelled.count,
+            total,
             model.completedCount + model.failedCount + (model.activeCount > 0 ? 1 : 0)
         )
 
@@ -73,7 +73,7 @@ struct TransferTrayView: View {
 
             VStack(alignment: .leading, spacing: 5) {
                 HStack(spacing: 8) {
-                    Text(headlineText(currentIndex: currentIndex, total: nonCancelled.count))
+                    Text(headlineText(currentIndex: currentIndex, total: total))
                         .font(.system(size: 12.5, weight: .semibold))
                         .foregroundStyle(palette.primaryText)
                         .lineLimit(1)
@@ -90,9 +90,15 @@ struct TransferTrayView: View {
                     }
                 }
 
-                ProgressView(value: model.overallProgress)
-                    .progressViewStyle(.linear)
-                    .tint(model.failedCount > 0 && model.activeCount == 0 ? palette.warningColor : palette.accent)
+                if model.isPreparing && model.activeCount == 0 {
+                    ProgressView()
+                        .progressViewStyle(.linear)
+                        .tint(palette.accent)
+                } else {
+                    ProgressView(value: model.overallProgress)
+                        .progressViewStyle(.linear)
+                        .tint(model.failedCount > 0 && model.activeCount == 0 ? palette.warningColor : palette.accent)
+                }
             }
 
             HStack(spacing: 6) {
@@ -154,8 +160,9 @@ struct TransferTrayView: View {
         let fg: Color
         let bg: Color
 
-        if model.activeCount > 0 {
-            iconName = model.activeOrCurrentTask?.direction == .upload ? "arrow.up.circle.fill" : "arrow.down.circle.fill"
+        if model.activeCount > 0 || model.isPreparing {
+            let isUpload = model.activeOrCurrentTask?.direction == .upload || model.isPreparing
+            iconName = isUpload ? "arrow.up.circle.fill" : "arrow.down.circle.fill"
             fg = palette.accent
             bg = palette.accentSoft
         } else if model.failedCount > 0 {
@@ -179,8 +186,15 @@ struct TransferTrayView: View {
     }
 
     private func headlineText(currentIndex: Int, total: Int) -> String {
+        if model.isPreparing && model.activeCount == 0 {
+            return model.preparingMessage ?? "正在扫描待传文件…"
+        }
         if model.activeCount > 0 {
-            var parts = ["正在传输第 \(max(1, currentIndex))/\(max(1, total)) 项"]
+            var title = "正在传输第 \(max(1, currentIndex))/\(max(1, total)) 项"
+            if model.isPreparing {
+                title += "（扫描中，已发现 \(model.totalTaskCount) 项）"
+            }
+            var parts = [title]
             if model.overallSpeedBytesPerSec > 1 {
                 let speed = PathUtils.formatByteCount(UInt64(model.overallSpeedBytesPerSec))
                 parts.append("\(speed)/s")
@@ -211,11 +225,18 @@ struct TransfersQueueView: View {
             headerBar
             Divider().overlay(palette.dividerColor)
 
-            if model.tasks.isEmpty {
+            if model.tasks.isEmpty && !model.isPreparing {
                 emptyView
             } else {
                 ScrollView {
                     LazyVStack(spacing: 8) {
+                        if model.tasks.count < model.totalTaskCount {
+                            Text("队列共 \(model.totalTaskCount) 项，为保持流畅仅展示当前、失败及最近条目（\(model.tasks.count) 条）。")
+                                .font(.system(size: 11.5))
+                                .foregroundStyle(palette.secondaryText)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(.bottom, 4)
+                        }
                         ForEach(model.tasks) { task in
                             taskRow(task)
                         }
@@ -242,7 +263,7 @@ struct TransfersQueueView: View {
                 Text("传输队列")
                     .font(.system(size: 14, weight: .semibold))
                     .foregroundStyle(palette.primaryText)
-                Text("进行中 \(model.activeCount) · 已完成 \(model.completedCount) · 失败 \(model.failedCount)")
+                Text("总计 \(model.totalTaskCount) · 进行中 \(model.activeCount) · 已完成 \(model.completedCount) · 失败 \(model.failedCount)" + (model.isPreparing ? " · 扫描中…" : ""))
                     .font(.system(size: 11.5))
                     .foregroundStyle(palette.secondaryText)
                     .monospacedDigit()
@@ -278,13 +299,13 @@ struct TransfersQueueView: View {
                 model.cancelAll()
             }
             .buttonStyle(.bordered)
-            .disabled(model.activeCount == 0)
+            .disabled(model.activeCount == 0 && !model.isPreparing)
 
             Button("清空已完成") {
                 model.clearFinished()
             }
             .buttonStyle(.bordered)
-            .disabled(model.tasks.allSatisfy { $0.isActive })
+            .disabled(model.totalTaskCount <= model.activeCount)
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 10)

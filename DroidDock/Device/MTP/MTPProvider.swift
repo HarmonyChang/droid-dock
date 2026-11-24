@@ -5,12 +5,56 @@ import USBMTP
 /// 基于 `USBMTP` 的 MTP 设备文件提供方；单设备所有操作由上层 `DeviceSession` 串行调用。
 actor MTPFileProvider: FileProvider {
     private let session: MTPSession
+    private let deviceVersion: String
+    private let supportsBatteryLevel: Bool
+    private let usbSpeedLabel: String?
+    private var hasProbedBattery = false
+    private var batteryUnavailable = false
     private var dirHandleCache: [UInt32: [String: UInt32]] = [:]
     private var nodeHandleCache: [String: UInt32] = [:]
     private var objectInfoCache: [UInt32: [UInt32: MTPObjectInfo]] = [:]
 
-    init(session: MTPSession) {
+    init(
+        session: MTPSession,
+        deviceVersion: String = "",
+        supportsBatteryLevel: Bool = false,
+        usbSpeedLabel: String? = nil
+    ) {
         self.session = session
+        self.deviceVersion = deviceVersion
+        self.supportsBatteryLevel = supportsBatteryLevel
+        self.usbSpeedLabel = usbSpeedLabel
+    }
+
+    func deviceStatus() async throws -> DeviceStatusInfo? {
+        var batteryLevel: Int?
+        if !batteryUnavailable && (supportsBatteryLevel || !hasProbedBattery) {
+            hasProbedBattery = true
+            do {
+                batteryLevel = try await session.batteryLevel()
+                if batteryLevel == nil && !supportsBatteryLevel {
+                    batteryUnavailable = true
+                }
+            } catch {
+                let mapped = Self.mapError(error)
+                if case .disconnected = mapped {
+                    throw DeviceError.disconnected
+                }
+                batteryUnavailable = true
+            }
+        }
+        let cleanVersion = deviceVersion.trimmingCharacters(in: .whitespacesAndNewlines)
+        return DeviceStatusInfo(
+            batteryLevel: batteryLevel,
+            chargingState: .unknown,
+            batteryTempCelsius: nil,
+            networkType: .unavailable,
+            wifiSSID: nil,
+            ipAddress: nil,
+            androidVersion: cleanVersion.isEmpty ? nil : cleanVersion,
+            connectionDetail: usbSpeedLabel.map { "USB 有线 · \($0)" } ?? "USB 有线 (MTP)",
+            updatedAt: Date()
+        )
     }
 
     func storages() async throws -> [StorageInfo] {
@@ -307,9 +351,6 @@ actor MTPFileProvider: FileProvider {
             if assignedHandle != 0, let info = try? await session.objectInfo(handle: assignedHandle) {
                 return makeNode(from: info, storage: storage, parentDir: normalizedDir)
             }
-            if let matched = try? await list(dir: normalizedDir, storage: storage).first(where: { $0.name == filename }) {
-                return matched
-            }
             return RemoteNode(
                 id: "\(storage):\(assignedHandle)",
                 storageID: storage,
@@ -441,11 +482,22 @@ actor MTPFileProvider: FileProvider {
         }
         if let mtpError = error as? MTPError {
             switch mtpError {
-            case .noDevice, .transport:
+            case .noDevice:
+                Log.device.error("MTP error: noDevice")
                 return .disconnected
+            case .transport(let msg):
+                Log.device.error("MTP transport disconnected: \(msg, privacy: .public)")
+                return .disconnected
+            case .timeout(let msg):
+                Log.device.error("MTP transient timeout: \(msg, privacy: .public)")
+                return .underlying(msg)
+            case .busy(let msg):
+                Log.device.error("MTP channel busy/stalled: \(msg, privacy: .public)")
+                return .busy
             case .responseFailed(let code):
                 switch code {
                 case 0x2003:
+                    Log.device.error("MTP response 0x2003 (Session Not Open)")
                     return .disconnected
                 case 0x2005:
                     return .unsupported
@@ -462,17 +514,24 @@ actor MTPFileProvider: FileProvider {
                 case 0x201D:
                     return .invalidName
                 default:
+                    Log.device.error("MTP responseFailed code=0x\(String(code, radix: 16), privacy: .public)")
                     return .underlying(String(format: "MTP 响应错误：0x%04X", code))
                 }
             case .malformedData(let msg), .unexpectedContainer(let msg):
+                Log.device.error("MTP protocol error: \(msg, privacy: .public)")
                 return .underlying(msg)
             }
         }
         let nsError = error as NSError
         if nsError.domain == "IOUSBHostErrorDomain" {
-            // -536870199 / -536870203 为占用错误，其余 I/O 失败在已建立会话时通常意味着断线或模式切换
-            if nsError.code == -536870199 || nsError.code == -536870203 {
+            let code = Int32(truncatingIfNeeded: nsError.code)
+            let hex = String(format: "0x%08X", UInt32(bitPattern: code))
+            Log.device.error("IOUSBHostErrorDomain code=\(code) (\(hex, privacy: .public)): \(nsError.localizedDescription, privacy: .public)")
+            if code == -536870199 || code == -536870203 || code == -536870187 || code == -536870165 {
                 return .busy
+            }
+            if code == -536870186 || code == -536854447 {
+                return .underlying("USB 传输超时（\(hex)），正在重试")
             }
             return .disconnected
         }
@@ -534,6 +593,14 @@ final class MTPDeviceBackend: DeviceBackend, @unchecked Sendable {
                 }
             }
             await scanNow(fastRetryForSwitch: false)
+        }
+
+        func invalidateAndReconnect(for id: DeviceID) async {
+            if entries[id] != nil {
+                await handleBrokenSession(for: id)
+            } else {
+                await scanNow(fastRetryForSwitch: true)
+            }
         }
 
         private func removeStream(_ id: UUID) {
@@ -641,7 +708,12 @@ final class MTPDeviceBackend: DeviceBackend, @unchecked Sendable {
                     serialNumber: devInfo.serialNumber.isEmpty ? candidate.serial : devInfo.serialNumber
                 )
                 let initialState: DeviceState = storages.isEmpty ? .locked : .ready
-                let provider = MTPFileProvider(session: session)
+                let provider = MTPFileProvider(
+                    session: session,
+                    deviceVersion: devInfo.deviceVersion,
+                    supportsBatteryLevel: devInfo.supportsBatteryLevel,
+                    usbSpeedLabel: candidate.usbSpeedLabel
+                )
                 var entry = Entry(
                     info: info,
                     state: initialState,
@@ -778,6 +850,10 @@ final class MTPDeviceBackend: DeviceBackend, @unchecked Sendable {
 
     func refresh() async {
         await coordinator.refresh()
+    }
+
+    func invalidateAndReconnect(_ id: DeviceID) async {
+        await coordinator.invalidateAndReconnect(for: id)
     }
 }
 

@@ -67,7 +67,7 @@ final class DeviceManager {
         }
         onUpdate?()
         Task {
-            await backend.refresh()
+            await backend.invalidateAndReconnect(id)
         }
     }
 
@@ -167,6 +167,16 @@ final class CompositeDeviceBackend: DeviceBackend, @unchecked Sendable {
     func refresh() async {
         for backend in backends {
             await backend.refresh()
+        }
+    }
+
+    func invalidateAndReconnect(_ id: DeviceID) async {
+        if let index = lock.withLock({ ownerByDeviceID[id.rawValue] }), backends.indices.contains(index) {
+            await backends[index].invalidateAndReconnect(id)
+            return
+        }
+        for backend in backends {
+            await backend.invalidateAndReconnect(id)
         }
     }
 }
