@@ -4,12 +4,11 @@
 
 ## 当前状态
 
-- 当前阶段：**`v0.2.0` 版本记录与应用内自动升级体系完成并通过 Release 部署 -- 新增 [CHANGELOG.md](CHANGELOG.md)、`SemanticVersion` 语义化比较、`AppUpdateService`（GitHub Releases API 检查、流式下载 + SHA-256 与 `codesign` 校验、备份与回滚安全自动替换重启）及 `AppUpdateSheetView`；`USBMTPTests`（15/15）与 `DroidDockTests`（31/31）全部通过，0 Swift 编译器警告；已更新部署 `/Applications/DroidDock.app`（`0.2.0 (2)`，PID `5270` 运行中）并生成 [dist/DroidDock-0.2.0-arm64.dmg](dist/DroidDock-0.2.0-arm64.dmg) 与 `.sha256`**
+- 当前阶段：**`v0.2.0` 已发布至 GitHub Releases 并补齐中英文专业仓库文档 -- 已完成 `README.md`（简体中文）与 `README_EN.md`（English）双语编写及全量本地路径/图片链接校验；`v0.2.0`（commit `cd3e363`，Tag `v0.2.0`）已发布至远程仓库与 GitHub Releases**
 - 代码与产物：
-  - [CHANGELOG.md](CHANGELOG.md) + [scripts/package-app.sh](scripts/package-app.sh) + [project.pbxproj](DroidDock.xcodeproj/project.pbxproj)：维护 `v0.1.0` ~ `v0.2.0` 完整变更日志，主版本号升级至 `0.2.0`（Build `2`），打包脚本自动读取版本号并输出 `.dmg.sha256` 校验文件。
-  - [AppUpdateService.swift](DroidDock/Services/AppUpdateService.swift) + [AppUpdateSheetView.swift](DroidDock/UI/AppUpdateSheetView.swift)：零第三方依赖对接 `HarmonyChang/droid-dock` GitHub Releases，支持启动定时静默检查、手动检查、跳过版本、下载进度显示、SHA-256 + `codesign` 校验、`hdiutil` 挂盘/解包与传输活跃期间升级拦截。
-  - [AppState.swift](DroidDock/App/AppState.swift) + [DroidDockApp.swift](DroidDock/App/DroidDockApp.swift) + [MainWindowView.swift](DroidDock/UI/MainWindowView.swift) + [SidebarView.swift](DroidDock/UI/SidebarView.swift)：菜单栏新增「检查更新… / 版本记录…」，边栏品牌标题旁展示可点击 `v0.2.0`（发现新版本时高亮为「新版本」）徽标。
-- 下一步：由用户在已启动的 `/Applications/DroidDock.app`（`v0.2.0` Build `2`，PID `5270` 运行中）查看版本记录与检查更新界面；确认无误后按指令提交、推送并在 GitHub Releases 上传安装包与 `.sha256`。
+  - [README.md](README.md) + [README_EN.md](README_EN.md)：基于当前真实已验证实现整理项目定位、纯 Swift `USBMTP` 架构、十万级批量传输、相册大图与 EXIF、双模无线、手机状态胶囊、自动升级机制、安装说明、构建/测试/打包指令与快捷键表，并嵌入 `docs/` 界面设计预览图。
+  - [CHANGELOG.md](CHANGELOG.md) + [scripts/package-app.sh](scripts/package-app.sh) + [AppUpdateService.swift](DroidDock/Services/AppUpdateService.swift)：`v0.2.0`（Build `2`）版本历史与 GitHub Releases 自动检查/校验/升级功能均已合入 `master` 并随 Release 附带 `DroidDock-0.2.0-arm64.dmg` 与 `.sha256` 发布。
+- 下一步：由用户审阅 [README.md](README.md) 与 [README_EN.md](README_EN.md) 后按需提交并推送文档更新；Android 伴生端扩展待后续排期再启动。
 
 ## 里程碑进度
 
@@ -41,6 +40,13 @@
 - 设计稿 HTML 为打包页面，未做视觉评审。
 
 ## 开发日志
+
+### 2026-11-25 10:26 -- 新增中英文专业 README 文档（`README.md` / `README_EN.md`）
+- 文档变更：
+  - 新增 [README.md](README.md)（简体中文）与 [README_EN.md](README_EN.md)（English），均支持顶部中英文互跳开关，全面介绍纯 Swift `USBMTP`、十万级传输优化、相册与 EXIF 查看器、扫码快传与无线 ADB 双模连接、手机状态浮窗、GitHub Releases 自动升级、Ad-hoc 首次启动说明、构建测试命令、快捷键与项目分层结构。
+  - 遵循仓库文档规范，仅描述 `v0.2.0` 已实现并验证的真实状态，未将未实现规划或待办写入 `README`。
+- 验证（2026-11-25 10:26）：
+  - 脚本校验通过：`README.md` 与 `README_EN.md` 各包含 `8` 处本地路径/截图链接，全部存在且可解析，且均无违规全角破折号。
 
 ### 2026-11-24 21:02 -- 升级至 `v0.2.0`：新增版本记录（CHANGELOG）与应用内 GitHub Releases 自动升级能力
 - 新增能力：
