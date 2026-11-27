@@ -143,6 +143,7 @@ final class AppUpdateTests: XCTestCase {
         }
         XCTAssertTrue(service.shouldHighlightUpdate)
         XCTAssertEqual(service.mergedChangelog.first?.version, "0.3.0")
+        XCTAssertTrue(service.mergedChangelog.contains { $0.version == "0.2.1" })
         XCTAssertTrue(service.mergedChangelog.contains { $0.version == "0.2.0" })
 
         // 跳过提醒后高亮消失

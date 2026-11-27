@@ -6,7 +6,7 @@
 
 ![Platform](https://img.shields.io/badge/macOS-14.0%2B%20(Apple%20Silicon)-1D2228?style=flat-square)
 ![Swift](https://img.shields.io/badge/Swift-6.0-355C7D?style=flat-square)
-![Version](https://img.shields.io/badge/Release-v0.2.0-2B7A58?style=flat-square)
+![Version](https://img.shields.io/badge/Release-v0.2.1-2B7A58?style=flat-square)
 ![Dependencies](https://img.shields.io/badge/Dependencies-Zero%20Third--Party-4A6B53?style=flat-square)
 
 **简体中文** | [English](./README_EN.md)

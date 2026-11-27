@@ -4,12 +4,11 @@
 
 ## 当前状态
 
-- 当前阶段：**真机界面细节与视频封面体验修复完成并重新部署 -- 修复左下角存储空间紧凑不换行与传输期 5 秒实时刷新、工具栏分段选择器多余截断标签与传输队列「同名冲突」竖排折叠，并新增基于 `GetPartialObject` / 无线按需分片的远程视频首帧封面提取（网格与列表同步显示，免整片下载）；`USBMTPTests`（15/15）与 `DroidDockTests`（33/33）全部通过，0 Swift 编译器警告，已更新重启 `/Applications/DroidDock.app`（PID `90942` 运行中）**
+- 当前阶段：**`v0.2.1`（Build `3`）发版完成 -- 升级工程版本、更新 [CHANGELOG.md](CHANGELOG.md) 与内置历史记录、更新中英文 README 版本徽章，完成 Release `arm64` 编译、ad-hoc 验签、`DroidDock-0.2.1-arm64.dmg`（`3.0 MB` / `3129379` 字节）及 `.sha256` 打包，已创建标签 `v0.2.1` 并发布 GitHub Release；`USBMTPTests`（15/15）与 `DroidDockTests`（33/33）全部通过，0 Swift 编译器警告**
 - 代码与产物：
-  - [PathUtils.swift](DroidDock/Support/PathUtils.swift) + [SidebarView.swift](DroidDock/UI/SidebarView.swift) + [BrowserModel.swift](DroidDock/App/BrowserModel.swift) + [AppState.swift](DroidDock/App/AppState.swift)：新增 `formatCompactStorage` 紧凑单小数容量显示与双行不折行布局；新增 `refreshStorages()` 在传输出错完成、删改目录与传输期每 5 秒自动更新剩余/已用空间。
-  - [BrowserToolbarView.swift](DroidDock/UI/BrowserToolbarView.swift) + [TransferTrayView.swift](DroidDock/UI/TransferTrayView.swift)：为视图切换 `Picker` 加上 `.labelsHidden()` 消除前置截断文本；将传输队列 `headerBar` 重排为双行紧凑布局彻底消除「同名冲突」竖向折行。
-  - [FileProvider.swift](DroidDock/Device/FileProvider.swift) + [DeviceSession.swift](DroidDock/Device/DeviceSession.swift) + [MTPProvider.swift](DroidDock/Device/MTP/MTPProvider.swift) + [ADBProvider.swift](DroidDock/Device/ADB/ADBProvider.swift) + [ThumbnailPipeline.swift](DroidDock/Services/ThumbnailPipeline.swift) + [BrowserContentView.swift](DroidDock/UI/BrowserContentView.swift)：全链路打通 `readPartial(_:offset:length:)`，通过 `AVAssetResourceLoaderDelegate`（128 KB 块缓存 + 4 MB 读取预算上限 + 8s 超时）按需拉取 MP4/MOV/M4V/3GP 头尾索引及首个关键帧生成 JPEG 封面，并在列表行补充微缩图展示。
-- 下一步：由用户在已重启的 `/Applications/DroidDock.app`（PID `90942` 运行中）复测左下角空间展示与实时刷新、传输队列头部、顶部视图切换与视频封面预览；确认无误后按指令决定是否提交推送并发布新版本。
+  - [project.pbxproj](DroidDock.xcodeproj/project.pbxproj) + [AppUpdateService.swift](DroidDock/Services/AppUpdateService.swift) + [CHANGELOG.md](CHANGELOG.md) + [README.md](README.md) + [README_EN.md](README_EN.md) + [AppUpdateTests.swift](DroidDock/Tests/AppUpdateTests.swift)：同步版本号至 `0.2.1`（Build `3`），补充 `0.2.1` 变更记录与单测断言。
+  - [dist/DroidDock-0.2.1-arm64.dmg](dist/DroidDock-0.2.1-arm64.dmg) + [dist/DroidDock-0.2.1-arm64.dmg.sha256](dist/DroidDock-0.2.1-arm64.dmg.sha256)：Release 安装包 SHA-256 为 `8d3ccd96fc8aa33e28302418032121f8cfafeb38a7bf046d8cd34a224e933d91`。
+- 下一步：保留本地 `/Applications/DroidDock.app` 现版本便于验证应用内自动升级检测与一键升级至 `v0.2.1`，或按用户指示直接覆盖本地安装或规划后续版本功能。
 
 ## 里程碑进度
 
@@ -41,6 +40,15 @@
 - 设计稿 HTML 为打包页面，未做视觉评审。
 
 ## 开发日志
+
+### 2026-11-27 22:15 -- 升级至 `v0.2.1`（Build `3`）并发布 GitHub Release
+- 变更与发版内容：
+  1. **版本号与变更日志同步**：将 [project.pbxproj](DroidDock.xcodeproj/project.pbxproj) Debug/Release 的 `MARKETING_VERSION` 升至 `0.2.1`、`CURRENT_PROJECT_VERSION` 升至 `3`；更新 [CHANGELOG.md](CHANGELOG.md)、[AppUpdateService.swift](DroidDock/Services/AppUpdateService.swift) 的 `bundledHistory` 与默认回退版本号、更新 [README.md](README.md) 与 [README_EN.md](README_EN.md) 顶部版本徽章，并在 [AppUpdateTests.swift](DroidDock/Tests/AppUpdateTests.swift) 补充 `0.2.1` 内置历史断言。
+  2. **Release 打包与校验**：执行 [scripts/package-app.sh](scripts/package-app.sh) 编译 Release `arm64` 应用、ad-hoc 签名与 `codesign --verify --deep --strict` 校验通过，`Info.plist` 实测为 `0.2.1`（`3`）；生成 `dist/DroidDock-0.2.1-arm64.dmg`（`3.0 MB` / `3129379` 字节）与 `.sha256`（`8d3ccd96fc8aa33e28302418032121f8cfafeb38a7bf046d8cd34a224e933d91`）。
+  3. **GitHub Release 发布**：提交版本升级变更、推送 `v0.2.1` 附注标签并上传 `DroidDock-0.2.1-arm64.dmg` 与 `.dmg.sha256` 至 `https://github.com/HarmonyChang/droid-dock/releases/tag/v0.2.1`。
+- 验证（2026-11-27 22:15）：
+  - `USBMTP` 引入边界保持仅限 [MTPProvider.swift](DroidDock/Device/MTP/MTPProvider.swift)。
+  - `Packages/USBMTP` `swift test`：**15/15** 通过；`xcodebuild ... build test`：**33/33** 通过（0 Swift 编译器警告）。
 
 ### 2026-11-27 21:54 -- 优化左下角存储展示与实时刷新、工具栏/传输队列布局并新增视频封面局部提取
 - 改动与修复：

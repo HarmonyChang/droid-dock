@@ -96,6 +96,18 @@ struct ChangelogEntry: Identifiable, Sendable, Equatable {
 
     static let bundledHistory: [ChangelogEntry] = [
         ChangelogEntry(
+            version: "0.2.1",
+            title: "界面细节修复、实时存储刷新与视频封面预览",
+            releaseDate: "2026-11-27",
+            notes: [
+                "优化左下角存储空间与设备详情弹窗容量展示（最多 1 位小数且不换行），并在目录增删、传输完成及传输期间每 5 秒自动刷新剩余空间。",
+                "修复顶部工具栏视图切换分段器多余截断标签，并将传输队列头部重排为两行布局，解决“同名冲突”筛选词竖排折叠问题。",
+                "新增基于 USB MTP GetPartialObject 与无线按需分片的远程视频首帧封面提取（128 KB 块缓存、4 MB 上限与 8 秒超时），并在列表视图接入缩略封面。",
+                "补充中英文 README 说明文档与开源 LICENSE。",
+            ],
+            releaseURL: URL(string: "https://github.com/HarmonyChang/droid-dock/releases/tag/v0.2.1")
+        ),
+        ChangelogEntry(
             version: "0.2.0",
             title: "超大规模传输稳定性重构与手机状态展示",
             releaseDate: "2026-11-24",
@@ -200,10 +212,10 @@ final class AppUpdateService {
     ) {
         self.currentVersionString = (currentVersionString?.trimmingCharacters(in: .whitespacesAndNewlines)).flatMap {
             $0.isEmpty ? nil : $0
-        } ?? "0.2.0"
+        } ?? "0.2.1"
         self.currentBuildString = (currentBuildString?.trimmingCharacters(in: .whitespacesAndNewlines)).flatMap {
             $0.isEmpty ? nil : $0
-        } ?? "1"
+        } ?? "3"
         self.userDefaults = userDefaults
         self.dataFetcher = dataFetcher ?? { request in
             try await URLSession.shared.data(for: request)
