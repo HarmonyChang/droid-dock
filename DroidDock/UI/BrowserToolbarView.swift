@@ -43,18 +43,22 @@ struct BrowserToolbarView: View {
                         .font(.system(size: 12))
                         .foregroundStyle(palette.secondaryText)
                         .monospacedDigit()
+                        .lineLimit(1)
+                        .truncationMode(.tail)
                 }
             }
+            .layoutPriority(1)
 
-            Spacer()
+            Spacer(minLength: 8)
 
             Picker("视图", selection: $browser.viewMode) {
                 ForEach(ViewMode.allCases, id: \.self) { mode in
                     Text(mode.title).tag(mode)
                 }
             }
+            .labelsHidden()
             .pickerStyle(.segmented)
-            .frame(width: 110)
+            .fixedSize()
 
             HStack(spacing: 6) {
                 Image(systemName: "magnifyingglass")
@@ -96,6 +100,8 @@ struct BrowserToolbarView: View {
                 )
             }
             .buttonStyle(.bordered)
+            .lineLimit(1)
+            .fixedSize(horizontal: true, vertical: false)
             .disabled(appState.effectiveDeviceState != .ready || browser.activeStorageID == nil)
 
             Button("导入到 Mac") {
@@ -111,6 +117,8 @@ struct BrowserToolbarView: View {
             }
             .buttonStyle(.borderedProminent)
             .tint(palette.accent)
+            .lineLimit(1)
+            .fixedSize(horizontal: true, vertical: false)
             .disabled(appState.effectiveDeviceState != .ready)
         }
         .padding(.horizontal, 16)

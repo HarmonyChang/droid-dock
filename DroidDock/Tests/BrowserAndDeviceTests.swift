@@ -592,4 +592,29 @@ final class BrowserAndDeviceTests: XCTestCase {
         try await waitUntil { appState.effectiveDeviceState == .locked && appState.currentDeviceStatus == nil }
         XCTAssertNil(appState.currentDeviceStatus)
     }
+
+    @MainActor
+    func testCompactStorageFormattingAndLiveStorageRefresh() async throws {
+        XCTAssertEqual(PathUtils.formatCompactStorage(151_840_000_000), "151.8 GB")
+        XCTAssertEqual(PathUtils.formatCompactStorage(512_000_000_000), "512 GB")
+        XCTAssertEqual(PathUtils.formatCompactStorage(1_200_000_000_000), "1.2 TB")
+        XCTAssertEqual(PathUtils.formatCompactStorage(320_000_000), "320 MB")
+
+        let storageID: UInt32 = 65537
+        let provider = FakeFileProvider(
+            storages: [StorageInfo(id: storageID, name: "内部共享存储空间", totalBytes: 512_000_000_000, freeBytes: 300_000_000_000)],
+            directories: [storageID: ["/": []]]
+        )
+        let session = DeviceSession(provider: provider)
+        let browser = BrowserModel()
+        await browser.attachSession(session, deviceID: DeviceID(rawValue: "usb-1"))
+        XCTAssertEqual(browser.currentStorage?.freeBytes, 300_000_000_000)
+
+        await provider.setStorages([
+            StorageInfo(id: storageID, name: "内部共享存储空间", totalBytes: 512_000_000_000, freeBytes: 260_000_000_000),
+        ])
+        await browser.selectSidebar(.transfers)
+        await browser.reload()
+        XCTAssertEqual(browser.currentStorage?.freeBytes, 260_000_000_000)
+    }
 }

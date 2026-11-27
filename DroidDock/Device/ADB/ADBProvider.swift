@@ -99,8 +99,30 @@ actor ADBFileProvider: FileProvider {
     }
 
     func thumbnail(for node: RemoteNode) async throws -> Data? {
-        // ADB 无 MTP 原生 GetThumb；返回 nil 由上层 ThumbnailPipeline 命中磁盘缓存或本地生成 320 px 缩略图
+        // ADB 无 MTP 原生 GetThumb；返回 nil 由上层 ThumbnailPipeline 走局部按需读取或缓存生成
         nil
+    }
+
+    func readPartial(_ node: RemoteNode, offset: UInt64, length: Int) async throws -> Data? {
+        guard length > 0, offset < node.size else { return nil }
+        let clampedLength = min(length, 1_048_576)
+        let remoteFile = Self.remotePath(from: node.path)
+        let quoted = Self.shellQuote(remoteFile)
+        let oneBasedStart = offset + 1
+        let cmd = "(dd if=\(quoted) bs=65536 iflag=skip_bytes,count_bytes skip=\(offset) count=\(clampedLength) 2>/dev/null || tail -c +\(oneBasedStart) \(quoted) 2>/dev/null | head -c \(clampedLength)) | base64"
+        do {
+            let encoded = try await client.run(["-s", serial, "shell", cmd], timeout: 8)
+            let decoded = Data(base64Encoded: encoded, options: .ignoreUnknownCharacters)
+            return (decoded?.isEmpty == false) ? decoded : nil
+        } catch let error as CancellationError {
+            throw error
+        } catch {
+            let mapped = Self.mapError(error)
+            if case .disconnected = mapped {
+                throw DeviceError.disconnected
+            }
+            return nil
+        }
     }
 
     func download(_ node: RemoteNode, to url: URL, progress: @Sendable (UInt64) -> Void) async throws {

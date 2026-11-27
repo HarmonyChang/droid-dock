@@ -29,6 +29,7 @@ DroidDock：macOS（仅 Apple Silicon，最低 macOS 14）原生应用，用于�
 | `docs/DroidDock — Android 文件管理 UI 设计.html` | 原型设计稿 HTML（打包页面，需在浏览器中打开） |
 | `AGENTS.md` | 项目信息与规则（本文件） |
 | `READMAP.md` | 开发进度与阶段记录 |
+| `docs/架构演进与关键排障笔记.md` | 纯 Swift MTP 路线、ZLP/十万级队列修复及无线/更新机制专题总结 |
 
 ## 3. 技术栈与架构
 

@@ -457,14 +457,24 @@ struct BrowserContentView: View {
         let badge = palette.nodeBadgeColors(for: node)
 
         return HStack(spacing: 10) {
-            RoundedRectangle(cornerRadius: 5, style: .continuous)
-                .fill(isSelected ? Color.white.opacity(0.22) : badge.bg)
-                .frame(width: 22, height: 22)
-                .overlay {
-                    Image(systemName: iconName(for: node))
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundStyle(isSelected ? Color.white : badge.fg)
-                }
+            if !node.isDirectory && (node.kind == .photo || node.kind == .video) {
+                MiniNodeThumbnailView(
+                    browser: appState.browser,
+                    node: node,
+                    iconName: iconName(for: node),
+                    iconColor: isSelected ? Color.white : badge.fg,
+                    placeholderBG: isSelected ? Color.white.opacity(0.22) : badge.bg
+                )
+            } else {
+                RoundedRectangle(cornerRadius: 5, style: .continuous)
+                    .fill(isSelected ? Color.white.opacity(0.22) : badge.bg)
+                    .frame(width: 22, height: 22)
+                    .overlay {
+                        Image(systemName: iconName(for: node))
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundStyle(isSelected ? Color.white : badge.fg)
+                    }
+            }
 
             HStack(spacing: 6) {
                 Text(node.name)
@@ -1135,6 +1145,55 @@ private struct NodeThumbnailView: View {
                 }
                 loadedImage = nil
                 guard !node.isDirectory, node.kind == .photo || node.kind == .video else { return }
+                loadedImage = await browser.loadThumbnailImage(for: node)
+            }
+    }
+}
+
+private struct MiniNodeThumbnailView: View {
+    let browser: BrowserModel
+    let node: RemoteNode
+    let iconName: String
+    let iconColor: Color
+    let placeholderBG: Color
+
+    @State private var loadedImage: NSImage?
+
+    var body: some View {
+        let displayImage = loadedImage ?? browser.cachedThumbnailImage(for: node)
+
+        RoundedRectangle(cornerRadius: 5, style: .continuous)
+            .fill(placeholderBG)
+            .frame(width: 24, height: 24)
+            .overlay {
+                if let displayImage {
+                    Image(nsImage: displayImage)
+                        .interpolation(.medium)
+                        .resizable()
+                        .scaledToFill()
+                } else {
+                    Image(systemName: iconName)
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(iconColor)
+                }
+            }
+            .clipShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
+            .overlay(alignment: .bottomTrailing) {
+                if node.kind == .video && displayImage != nil {
+                    Image(systemName: "play.fill")
+                        .font(.system(size: 7))
+                        .foregroundStyle(Color.white)
+                        .padding(2)
+                        .background(Circle().fill(Color.black.opacity(0.6)))
+                        .padding(1.5)
+                }
+            }
+            .task(id: node.id) {
+                if let cached = browser.cachedThumbnailImage(for: node) {
+                    loadedImage = cached
+                    return
+                }
+                loadedImage = nil
                 loadedImage = await browser.loadThumbnailImage(for: node)
             }
     }

@@ -146,6 +146,34 @@ enum PathUtils {
         ByteCountFormatter.string(fromByteCount: Int64(clamping: bytes), countStyle: .file)
     }
 
+    /// 紧凑存储容量格式化（最多 1 位小数并省略末尾 `.0`，防止窄侧边栏换行）。
+    static func formatCompactStorage(_ bytes: UInt64) -> String {
+        let tb: Double = 1_000_000_000_000
+        let gb: Double = 1_000_000_000
+        let mb: Double = 1_000_000
+        let value = Double(bytes)
+        if value >= tb {
+            return formatCompactDecimal(value / tb, unit: "TB", decimals: 1)
+        } else if value >= gb {
+            return formatCompactDecimal(value / gb, unit: "GB", decimals: 1)
+        } else if value >= mb {
+            let mbs = value / mb
+            return formatCompactDecimal(mbs, unit: "MB", decimals: mbs < 100 ? 1 : 0)
+        }
+        return formatByteCount(bytes)
+    }
+
+    private static func formatCompactDecimal(_ value: Double, unit: String, decimals: Int) -> String {
+        if decimals == 0 {
+            return "\(Int(value.rounded())) \(unit)"
+        }
+        let rounded = (value * 10.0).rounded() / 10.0
+        if rounded.truncatingRemainder(dividingBy: 1.0) == 0 {
+            return "\(Int(rounded)) \(unit)"
+        }
+        return String(format: "%.1f %@", rounded, unit)
+    }
+
     static func formatMTPDate(_ date: Date) -> String {
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = .current

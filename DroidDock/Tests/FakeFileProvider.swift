@@ -234,6 +234,19 @@ actor FakeFileProvider: FileProvider {
         }
         return stubbedDeviceStatus
     }
+
+    func readPartial(_ node: RemoteNode, offset: UInt64, length: Int) async throws -> Data? {
+        recordedOperations.append("partial:\(node.id):\(offset):\(length)")
+        if let nextError {
+            throw nextError
+        }
+        guard length > 0, let payload = filePayloads[node.id], offset < UInt64(payload.count) else {
+            return nil
+        }
+        let start = Int(offset)
+        let end = min(payload.count, start + length)
+        return payload.subdata(in: start..<end)
+    }
 }
 
 /// 可控假设备后端，模拟热插拔与状态切换。

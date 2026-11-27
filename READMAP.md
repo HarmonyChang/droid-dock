@@ -4,11 +4,12 @@
 
 ## 当前状态
 
-- 当前阶段：**`v0.2.0` 已发布至 GitHub Releases 并补齐中英文专业仓库文档 -- 已完成 `README.md`（简体中文）与 `README_EN.md`（English）双语编写及全量本地路径/图片链接校验；`v0.2.0`（commit `cd3e363`，Tag `v0.2.0`）已发布至远程仓库与 GitHub Releases**
+- 当前阶段：**真机界面细节与视频封面体验修复完成并重新部署 -- 修复左下角存储空间紧凑不换行与传输期 5 秒实时刷新、工具栏分段选择器多余截断标签与传输队列「同名冲突」竖排折叠，并新增基于 `GetPartialObject` / 无线按需分片的远程视频首帧封面提取（网格与列表同步显示，免整片下载）；`USBMTPTests`（15/15）与 `DroidDockTests`（33/33）全部通过，0 Swift 编译器警告，已更新重启 `/Applications/DroidDock.app`（PID `90942` 运行中）**
 - 代码与产物：
-  - [README.md](README.md) + [README_EN.md](README_EN.md)：基于当前真实已验证实现整理项目定位、纯 Swift `USBMTP` 架构、十万级批量传输、相册大图与 EXIF、双模无线、手机状态胶囊、自动升级机制、安装说明、构建/测试/打包指令与快捷键表，并嵌入 `docs/` 界面设计预览图。
-  - [CHANGELOG.md](CHANGELOG.md) + [scripts/package-app.sh](scripts/package-app.sh) + [AppUpdateService.swift](DroidDock/Services/AppUpdateService.swift)：`v0.2.0`（Build `2`）版本历史与 GitHub Releases 自动检查/校验/升级功能均已合入 `master` 并随 Release 附带 `DroidDock-0.2.0-arm64.dmg` 与 `.sha256` 发布。
-- 下一步：由用户审阅 [README.md](README.md) 与 [README_EN.md](README_EN.md) 后按需提交并推送文档更新；Android 伴生端扩展待后续排期再启动。
+  - [PathUtils.swift](DroidDock/Support/PathUtils.swift) + [SidebarView.swift](DroidDock/UI/SidebarView.swift) + [BrowserModel.swift](DroidDock/App/BrowserModel.swift) + [AppState.swift](DroidDock/App/AppState.swift)：新增 `formatCompactStorage` 紧凑单小数容量显示与双行不折行布局；新增 `refreshStorages()` 在传输出错完成、删改目录与传输期每 5 秒自动更新剩余/已用空间。
+  - [BrowserToolbarView.swift](DroidDock/UI/BrowserToolbarView.swift) + [TransferTrayView.swift](DroidDock/UI/TransferTrayView.swift)：为视图切换 `Picker` 加上 `.labelsHidden()` 消除前置截断文本；将传输队列 `headerBar` 重排为双行紧凑布局彻底消除「同名冲突」竖向折行。
+  - [FileProvider.swift](DroidDock/Device/FileProvider.swift) + [DeviceSession.swift](DroidDock/Device/DeviceSession.swift) + [MTPProvider.swift](DroidDock/Device/MTP/MTPProvider.swift) + [ADBProvider.swift](DroidDock/Device/ADB/ADBProvider.swift) + [ThumbnailPipeline.swift](DroidDock/Services/ThumbnailPipeline.swift) + [BrowserContentView.swift](DroidDock/UI/BrowserContentView.swift)：全链路打通 `readPartial(_:offset:length:)`，通过 `AVAssetResourceLoaderDelegate`（128 KB 块缓存 + 4 MB 读取预算上限 + 8s 超时）按需拉取 MP4/MOV/M4V/3GP 头尾索引及首个关键帧生成 JPEG 封面，并在列表行补充微缩图展示。
+- 下一步：由用户在已重启的 `/Applications/DroidDock.app`（PID `90942` 运行中）复测左下角空间展示与实时刷新、传输队列头部、顶部视图切换与视频封面预览；确认无误后按指令决定是否提交推送并发布新版本。
 
 ## 里程碑进度
 
@@ -40,6 +41,16 @@
 - 设计稿 HTML 为打包页面，未做视觉评审。
 
 ## 开发日志
+
+### 2026-11-27 21:54 -- 优化左下角存储展示与实时刷新、工具栏/传输队列布局并新增视频封面局部提取
+- 改动与修复：
+  1. **存储空间紧凑不换行与实时刷新**：[PathUtils.swift](DroidDock/Support/PathUtils.swift) 新增 `formatCompactStorage`（1 位小数并去 `.0`）；[SidebarView.swift](DroidDock/UI/SidebarView.swift) 将 `storageFooter` 调整为单行顶部（卷名 + 可用）+ 进度条 + 单行底部（已用/总计 + 百分比）防止 232 pt 边栏折行；[BrowserModel.swift](DroidDock/App/BrowserModel.swift) 与 [AppState.swift](DroidDock/App/AppState.swift) 新增 `refreshStorages()`，在目录增删、传输完成（即使停留在传输队列页）及传输进行中每 5 秒同步更新空间统计。
+  2. **顶部工具栏与传输队列布局修复**：[BrowserToolbarView.swift](DroidDock/UI/BrowserToolbarView.swift) 为视图分段器添加 `.labelsHidden()` 与 `.fixedSize()` 消除“网格/列表”前多余截断文字；[TransferTrayView.swift](DroidDock/UI/TransferTrayView.swift) 将 `headerBar` 重构为两行清晰布局彻底解决“同名冲突”竖向折行。
+  3. **远程视频首帧封面生成**：[FileProvider.swift](DroidDock/Device/FileProvider.swift)、[DeviceSession.swift](DroidDock/Device/DeviceSession.swift)、[MTPProvider.swift](DroidDock/Device/MTP/MTPProvider.swift)、[ADBProvider.swift](DroidDock/Device/ADB/ADBProvider.swift) 实现按偏移局部字节读取 `readPartial`；[ThumbnailPipeline.swift](DroidDock/Services/ThumbnailPipeline.swift) 新增 `RemoteVideoResourceLoader`（128 KB 块缓存、4 MB 预算上限、8 秒超时与取消清理）按需拉取 MP4/MOV/M4V/3GP 索引及首帧；[BrowserContentView.swift](DroidDock/UI/BrowserContentView.swift) 为列表行照片/视频同步显示缩略封面。
+- 验证与部署（2026-11-27 21:54）：
+  - 非测试代码 0 `!` 强制解包，`USBMTP` 引入边界保持干净。
+  - `Packages/USBMTP` `swift test`：**15/15** 通过；`xcodebuild ... build test`：**33/33** 通过（0 Swift 编译警告，含新增 [MediaAndThumbnailTests.swift](DroidDock/Tests/MediaAndThumbnailTests.swift) 大视频局部拉取封面回归测试与 [BrowserAndDeviceTests.swift](DroidDock/Tests/BrowserAndDeviceTests.swift) 紧凑格式化及实时容量刷新测试）。
+  - 执行 [scripts/package-app.sh](scripts/package-app.sh) 生成 Release 包体并替换 `/Applications/DroidDock.app`，清理开发缓存后 `codesign --verify --deep --strict` 校验通过，已启动运行（PID `90942`）。
 
 ### 2026-11-25 10:26 -- 新增中英文专业 README 文档（`README.md` / `README_EN.md`）
 - 文档变更：

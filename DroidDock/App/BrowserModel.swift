@@ -792,6 +792,7 @@ final class BrowserModel {
         let targetDir = effectiveUploadDirectory
         do {
             try await session.makeDirectory(trimmed, in: targetDir, storage: storageID)
+            await refreshStorages()
             await loadActiveSection(forceRefreshMedia: isMediaMode)
             return nil
         } catch let error as DeviceError {
@@ -833,6 +834,7 @@ final class BrowserModel {
                     paths: nodesToDelete.map(\.path)
                 )
             }
+            await refreshStorages()
             await loadActiveSection(forceRefreshMedia: true)
         } catch let error as DeviceError {
             if case .disconnected = error {
@@ -885,8 +887,32 @@ final class BrowserModel {
     }
 
     func reload() async {
+        await refreshStorages()
         guard selectedSidebar != .transfers else { return }
         await loadActiveSection(forceRefreshMedia: true)
+    }
+
+    /// 轻量刷新存储卷容量统计（`GetStorageInfo` / `df`），供传输期间或操作后实时更新左下角可用空间。
+    func refreshStorages() async {
+        guard let session = activeSession,
+              let expectedDeviceID = activeDeviceID,
+              !isDeviceLocked else {
+            return
+        }
+        do {
+            let fetched = try await session.storages()
+            guard activeDeviceID == expectedDeviceID, !fetched.isEmpty else { return }
+            storages = fetched
+            if selectedStorageID == nil || !fetched.contains(where: { $0.id == selectedStorageID }) {
+                selectedStorageID = fetched.first?.id
+            }
+        } catch let error as DeviceError {
+            if case .disconnected = error {
+                handleDeviceError(error)
+            }
+        } catch {
+            return
+        }
     }
 
     func toggleSelection(_ nodeID: String, additive: Bool) {

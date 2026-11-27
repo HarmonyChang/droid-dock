@@ -258,23 +258,54 @@ struct TransfersQueueView: View {
     }
 
     private var headerBar: some View {
-        HStack(spacing: 12) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text("传输队列")
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundStyle(palette.primaryText)
-                Text("总计 \(model.totalTaskCount) · 进行中 \(model.activeCount) · 已完成 \(model.completedCount) · 失败 \(model.failedCount)" + (model.isPreparing ? " · 扫描中…" : ""))
-                    .font(.system(size: 11.5))
-                    .foregroundStyle(palette.secondaryText)
-                    .monospacedDigit()
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 10) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("传输队列")
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(palette.primaryText)
+                    Text("总计 \(model.totalTaskCount) · 进行中 \(model.activeCount) · 已完成 \(model.completedCount) · 失败 \(model.failedCount)" + (model.isPreparing ? " · 扫描中…" : ""))
+                        .font(.system(size: 11.5))
+                        .foregroundStyle(palette.secondaryText)
+                        .monospacedDigit()
+                        .lineLimit(1)
+                }
+
+                Spacer(minLength: 8)
+
+                HStack(spacing: 6) {
+                    Button("全部重试") {
+                        model.retryAllFailed()
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .fixedSize(horizontal: true, vertical: false)
+                    .disabled(model.failedCount == 0)
+
+                    Button("取消全部") {
+                        model.cancelAll()
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .fixedSize(horizontal: true, vertical: false)
+                    .disabled(model.activeCount == 0 && !model.isPreparing)
+
+                    Button("清空已完成") {
+                        model.clearFinished()
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .fixedSize(horizontal: true, vertical: false)
+                    .disabled(model.totalTaskCount <= model.activeCount)
+                }
             }
 
-            Spacer()
-
-            HStack(spacing: 6) {
+            HStack(spacing: 8) {
                 Text("同名冲突")
                     .font(.system(size: 12))
                     .foregroundStyle(palette.secondaryText)
+                    .lineLimit(1)
+                    .fixedSize(horizontal: true, vertical: false)
 
                 Picker("同名冲突", selection: Binding(
                     get: { model.conflictStrategy },
@@ -286,26 +317,19 @@ struct TransfersQueueView: View {
                 }
                 .labelsHidden()
                 .pickerStyle(.segmented)
-                .frame(width: 220)
-            }
+                .controlSize(.small)
+                .frame(width: 230)
 
-            Button("全部重试") {
-                model.retryAllFailed()
-            }
-            .buttonStyle(.bordered)
-            .disabled(model.failedCount == 0)
+                Spacer()
 
-            Button("取消全部") {
-                model.cancelAll()
+                if model.overallSpeedBytesPerSec > 1 {
+                    Text("当前速度 \(PathUtils.formatByteCount(UInt64(model.overallSpeedBytesPerSec)))/s")
+                        .font(.system(size: 11.5))
+                        .foregroundStyle(palette.secondaryText)
+                        .monospacedDigit()
+                        .lineLimit(1)
+                }
             }
-            .buttonStyle(.bordered)
-            .disabled(model.activeCount == 0 && !model.isPreparing)
-
-            Button("清空已完成") {
-                model.clearFinished()
-            }
-            .buttonStyle(.bordered)
-            .disabled(model.totalTaskCount <= model.activeCount)
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 10)

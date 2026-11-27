@@ -3,6 +3,7 @@ import AVFoundation
 import CryptoKit
 import Foundation
 import ImageIO
+import UniformTypeIdentifiers
 
 /// 多级缩略图流水线：内存 `NSCache` → 磁盘 LRU 缓存（默认上限 2 GB）→ 设备原生缩略图 → 临时下载后 ImageIO/AVAssetImageGenerator 生成 320 px 缩略图。
 actor ThumbnailPipeline {
@@ -128,11 +129,25 @@ actor ThumbnailPipeline {
             }
             try Task.checkCancellation()
 
-            // 第三级：设备原生缩略图（GetThumb）或前 128 KB 内嵌 EXIF 缩略图
+            // 第三级：设备原生缩略图（GetThumb）或照片前 128 KB 内嵌 EXIF 缩略图
             if let nativeData = try await session.thumbnail(for: node), !nativeData.isEmpty {
                 let normalized = Self.downsampleImageData(nativeData, maxPixelSize: Self.maxThumbnailDimension) ?? nativeData
                 store(data: normalized, key: key, diskURL: diskURL)
                 return normalized
+            }
+
+            try Task.checkCancellation()
+
+            // 第三级（视频扩展）：通过按需局部字节读取 + AVAssetResourceLoader 仅拉取头尾索引与首个关键帧生成封面
+            if node.kind == .video, node.size > 0, Self.supportsPartialVideoCover(for: node.name) {
+                if let videoCover = try await Self.extractRemoteVideoThumbnail(
+                    for: node,
+                    session: session,
+                    maxPixelSize: Self.maxThumbnailDimension
+                ) {
+                    store(data: videoCover, key: key, diskURL: diskURL)
+                    return videoCover
+                }
             }
 
             try Task.checkCancellation()
@@ -345,6 +360,307 @@ actor ThumbnailPipeline {
     private static func encodeJPEG(cgImage: CGImage) -> Data? {
         let rep = NSBitmapImageRep(cgImage: cgImage)
         return rep.representation(using: .jpeg, properties: [.compressionFactor: 0.85])
+    }
+
+    private static let partialVideoExtensions: Set<String> = ["mp4", "mov", "m4v", "3gp"]
+
+    private static func supportsPartialVideoCover(for filename: String) -> Bool {
+        let ext = (filename as NSString).pathExtension.lowercased()
+        return partialVideoExtensions.contains(ext)
+    }
+
+    private static func extractRemoteVideoThumbnail(
+        for node: RemoteNode,
+        session: DeviceSession,
+        maxPixelSize: Int
+    ) async throws -> Data? {
+        guard let initialHead = try await session.readPartial(
+            node,
+            offset: 0,
+            length: Int(RemoteVideoResourceLoader.blockSize)
+        ), !initialHead.isEmpty else {
+            return nil
+        }
+        try Task.checkCancellation()
+
+        let ext = (node.name as NSString).pathExtension.lowercased()
+        let contentTypeID = UTType(filenameExtension: ext)?.identifier ?? UTType.mpeg4Movie.identifier
+        guard let virtualURL = URL(string: "\(RemoteVideoResourceLoader.customScheme)://video/\(UUID().uuidString).\(ext.isEmpty ? "mp4" : ext)") else {
+            return nil
+        }
+
+        let box = VideoFrameExtractorBox(
+            virtualURL: virtualURL,
+            node: node,
+            session: session,
+            contentTypeIdentifier: contentTypeID,
+            initialBlockZero: initialHead,
+            maxPixelSize: maxPixelSize
+        )
+
+        return try await withTaskCancellationHandler {
+            try await withThrowingTaskGroup(of: Data?.self) { group in
+                group.addTask {
+                    defer { box.cancelAndClose() }
+                    let targetTimes = [CMTime(seconds: 0.5, preferredTimescale: 600), .zero]
+                    for time in targetTimes {
+                        try Task.checkCancellation()
+                        if let cgImage = try? await box.generator.image(at: time).image {
+                            return encodeJPEG(cgImage: cgImage)
+                        }
+                        if let disconnectedError = box.loader.consumeDisconnectError() {
+                            throw disconnectedError
+                        }
+                    }
+                    return nil
+                }
+
+                group.addTask {
+                    try? await Task.sleep(nanoseconds: 8_000_000_000)
+                    box.cancelAndClose()
+                    return nil
+                }
+
+                let firstResult = try await group.next() ?? nil
+                group.cancelAll()
+                return firstResult
+            }
+        } onCancel: {
+            box.cancelAndClose()
+        }
+    }
+}
+
+private final class VideoFrameExtractorBox: @unchecked Sendable {
+    let loader: RemoteVideoResourceLoader
+    let asset: AVURLAsset
+    let generator: AVAssetImageGenerator
+    private let loaderQueue = DispatchQueue(label: "droiddock.videothumb.loader")
+
+    init(
+        virtualURL: URL,
+        node: RemoteNode,
+        session: DeviceSession,
+        contentTypeIdentifier: String,
+        initialBlockZero: Data,
+        maxPixelSize: Int
+    ) {
+        self.loader = RemoteVideoResourceLoader(
+            node: node,
+            session: session,
+            contentTypeIdentifier: contentTypeIdentifier,
+            initialBlockZero: initialBlockZero
+        )
+        self.asset = AVURLAsset(url: virtualURL)
+        self.asset.resourceLoader.setDelegate(self.loader, queue: self.loaderQueue)
+        self.generator = AVAssetImageGenerator(asset: self.asset)
+        self.generator.appliesPreferredTrackTransform = true
+        self.generator.maximumSize = CGSize(width: maxPixelSize, height: maxPixelSize)
+        self.generator.requestedTimeToleranceBefore = .positiveInfinity
+        self.generator.requestedTimeToleranceAfter = .positiveInfinity
+    }
+
+    func cancelAndClose() {
+        generator.cancelAllCGImageGeneration()
+        loader.close()
+    }
+}
+
+/// 通过按需 128 KB 局部读取向 `AVURLAsset` 提供视频首帧所需字节，避免下载整部大视频。
+private final class RemoteVideoResourceLoader: NSObject, AVAssetResourceLoaderDelegate, @unchecked Sendable {
+    static let customScheme = "droiddock-remote-video"
+    static let blockSize: UInt64 = 131_072
+    private static let maxReadBudgetBytes: Int = 4 * 1024 * 1024
+
+    private let node: RemoteNode
+    private let session: DeviceSession
+    private let contentTypeIdentifier: String
+    private let lock = NSLock()
+    private var blockCache: [UInt64: Data] = [:]
+    private var totalFetchedBytes: Int
+    private var inFlightTasks: [ObjectIdentifier: Task<Void, Never>] = [:]
+    private var isClosed = false
+    private var disconnectError: DeviceError?
+
+    init(
+        node: RemoteNode,
+        session: DeviceSession,
+        contentTypeIdentifier: String,
+        initialBlockZero: Data
+    ) {
+        self.node = node
+        self.session = session
+        self.contentTypeIdentifier = contentTypeIdentifier
+        self.blockCache[0] = initialBlockZero
+        self.totalFetchedBytes = initialBlockZero.count
+    }
+
+    func consumeDisconnectError() -> DeviceError? {
+        lock.withLock { disconnectError }
+    }
+
+    func close() {
+        let tasksToCancel = lock.withLock { () -> [Task<Void, Never>] in
+            isClosed = true
+            let list = Array(inFlightTasks.values)
+            inFlightTasks.removeAll()
+            return list
+        }
+        for task in tasksToCancel {
+            task.cancel()
+        }
+    }
+
+    func resourceLoader(
+        _ resourceLoader: AVAssetResourceLoader,
+        shouldWaitForLoadingOfRequestedResource loadingRequest: AVAssetResourceLoadingRequest
+    ) -> Bool {
+        if lock.withLock({ isClosed }) {
+            return false
+        }
+
+        if let infoRequest = loadingRequest.contentInformationRequest {
+            infoRequest.contentType = contentTypeIdentifier
+            infoRequest.contentLength = Int64(node.size)
+            infoRequest.isByteRangeAccessSupported = true
+        }
+
+        guard let dataRequest = loadingRequest.dataRequest else {
+            loadingRequest.finishLoading()
+            return true
+        }
+
+        let reqKey = ObjectIdentifier(loadingRequest)
+        let box = LoadingRequestBox(loadingRequest)
+        let task = Task { [weak self] in
+            guard let self else {
+                box.request.finishLoading(with: CancellationError())
+                return
+            }
+            defer {
+                self.lock.withLock {
+                    _ = self.inFlightTasks.removeValue(forKey: reqKey)
+                }
+            }
+            await self.serveDataRequest(box.request, dataRequest: dataRequest)
+        }
+
+        lock.withLock {
+            if isClosed {
+                task.cancel()
+            } else {
+                inFlightTasks[reqKey] = task
+            }
+        }
+        return true
+    }
+
+    func resourceLoader(
+        _ resourceLoader: AVAssetResourceLoader,
+        didCancel loadingRequest: AVAssetResourceLoadingRequest
+    ) {
+        let reqKey = ObjectIdentifier(loadingRequest)
+        let task = lock.withLock { inFlightTasks.removeValue(forKey: reqKey) }
+        task?.cancel()
+    }
+
+    private func serveDataRequest(
+        _ loadingRequest: AVAssetResourceLoadingRequest,
+        dataRequest: AVAssetResourceLoadingDataRequest
+    ) async {
+        let startOffset = UInt64(max(0, dataRequest.currentOffset))
+        guard startOffset < node.size else {
+            loadingRequest.finishLoading()
+            return
+        }
+
+        let remainingToEOF = node.size - startOffset
+        let targetEnd: UInt64
+        if dataRequest.requestsAllDataToEndOfResource {
+            targetEnd = node.size
+        } else {
+            let requestedLen = UInt64(max(0, dataRequest.requestedLength))
+            targetEnd = startOffset + min(requestedLen, remainingToEOF)
+        }
+
+        var cursor = startOffset
+        while cursor < targetEnd {
+            if Task.isCancelled || lock.withLock({ isClosed }) {
+                loadingRequest.finishLoading(with: CancellationError())
+                return
+            }
+
+            let blockStart = (cursor / Self.blockSize) * Self.blockSize
+            let blockData: Data
+            do {
+                guard let loaded = try await loadBlock(at: blockStart) else {
+                    loadingRequest.finishLoading()
+                    return
+                }
+                blockData = loaded
+            } catch let devError as DeviceError {
+                if case .disconnected = devError {
+                    lock.withLock { disconnectError = .disconnected }
+                }
+                loadingRequest.finishLoading(with: devError)
+                return
+            } catch {
+                loadingRequest.finishLoading(with: error)
+                return
+            }
+
+            let offsetInBlock = Int(cursor - blockStart)
+            guard offsetInBlock < blockData.count else {
+                loadingRequest.finishLoading()
+                return
+            }
+
+            let maxSliceEnd = min(blockData.count, offsetInBlock + Int(min(UInt64(Int.max), targetEnd - cursor)))
+            let slice = blockData.subdata(in: offsetInBlock..<maxSliceEnd)
+            if slice.isEmpty {
+                break
+            }
+            dataRequest.respond(with: slice)
+            cursor += UInt64(slice.count)
+        }
+
+        loadingRequest.finishLoading()
+    }
+
+    private func loadBlock(at blockStart: UInt64) async throws -> Data? {
+        if let cached = lock.withLock({ blockCache[blockStart] }) {
+            return cached
+        }
+        guard blockStart < node.size else { return nil }
+        let requestLen = Int(min(Self.blockSize, node.size - blockStart))
+
+        let allowed = lock.withLock { () -> Bool in
+            guard !isClosed else { return false }
+            return totalFetchedBytes + requestLen <= Self.maxReadBudgetBytes
+        }
+        guard allowed else {
+            throw DeviceError.unsupported
+        }
+
+        guard let fetched = try await session.readPartial(node, offset: blockStart, length: requestLen),
+              !fetched.isEmpty else {
+            return nil
+        }
+
+        lock.withLock {
+            if blockCache[blockStart] == nil {
+                blockCache[blockStart] = fetched
+                totalFetchedBytes += fetched.count
+            }
+        }
+        return fetched
+    }
+}
+
+private final class LoadingRequestBox: @unchecked Sendable {
+    let request: AVAssetResourceLoadingRequest
+    init(_ request: AVAssetResourceLoadingRequest) {
+        self.request = request
     }
 }
 

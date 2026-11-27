@@ -47,6 +47,10 @@ actor DeviceSession {
         try await run { try await provider.makeDirectory(name, in: dir, storage: storage) }
     }
 
+    func readPartial(_ node: RemoteNode, offset: UInt64, length: Int) async throws -> Data? {
+        try await run { try await provider.readPartial(node, offset: offset, length: length) }
+    }
+
     func deviceStatus() async throws -> DeviceStatusInfo? {
         try await run { try await provider.deviceStatus() }
     }

@@ -10,6 +10,7 @@ actor MTPFileProvider: FileProvider {
     private let usbSpeedLabel: String?
     private var hasProbedBattery = false
     private var batteryUnavailable = false
+    private var partialReadUnsupported = false
     private var dirHandleCache: [UInt32: [String: UInt32]] = [:]
     private var nodeHandleCache: [String: UInt32] = [:]
     private var objectInfoCache: [UInt32: [UInt32: MTPObjectInfo]] = [:]
@@ -229,6 +230,54 @@ actor MTPFileProvider: FileProvider {
             throw error
         } catch {
             throw Self.mapError(error)
+        }
+    }
+
+    func readPartial(_ node: RemoteNode, offset: UInt64, length: Int) async throws -> Data? {
+        guard !partialReadUnsupported,
+              length > 0,
+              offset < node.size,
+              offset <= UInt64(UInt32.max) else {
+            return nil
+        }
+        do {
+            try Task.checkCancellation()
+            let objectHandle = try handle(for: node)
+            let available = node.size - offset
+            let clampedTotal = Int(min(UInt64(length), min(available, UInt64(UInt32.max))))
+            var combined = Data()
+            combined.reserveCapacity(clampedTotal)
+
+            var cursor = offset
+            var remaining = clampedTotal
+            while remaining > 0 {
+                try Task.checkCancellation()
+                guard cursor <= UInt64(UInt32.max) else { break }
+                let chunkReq = UInt32(min(remaining, 262_144))
+                let chunk = try await session.partialObject(handle: objectHandle, offset: UInt32(cursor), maxBytes: chunkReq)
+                if chunk.isEmpty {
+                    break
+                }
+                combined.append(chunk)
+                cursor += UInt64(chunk.count)
+                remaining -= min(remaining, chunk.count)
+                if chunk.count < Int(chunkReq) {
+                    break
+                }
+            }
+            return combined.isEmpty ? nil : combined
+        } catch let error as CancellationError {
+            throw error
+        } catch {
+            let mapped = Self.mapError(error)
+            if case .unsupported = mapped {
+                partialReadUnsupported = true
+                return nil
+            }
+            if case .disconnected = mapped {
+                throw DeviceError.disconnected
+            }
+            return nil
         }
     }
 

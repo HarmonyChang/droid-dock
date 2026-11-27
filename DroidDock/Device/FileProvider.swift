@@ -122,12 +122,17 @@ protocol FileProvider: Sendable {
     func upload(from url: URL, toDir: String, remoteName: String?, storage: UInt32, progress: @Sendable (UInt64) -> Void) async throws -> RemoteNode
     func delete(_ node: RemoteNode) async throws
     func makeDirectory(_ name: String, in dir: String, storage: UInt32) async throws
+    func readPartial(_ node: RemoteNode, offset: UInt64, length: Int) async throws -> Data?
     func deviceStatus() async throws -> DeviceStatusInfo?
 }
 
 extension FileProvider {
     func upload(from url: URL, toDir: String, storage: UInt32, progress: @Sendable (UInt64) -> Void) async throws -> RemoteNode {
         try await upload(from: url, toDir: toDir, remoteName: nil, storage: storage, progress: progress)
+    }
+
+    func readPartial(_ node: RemoteNode, offset: UInt64, length: Int) async throws -> Data? {
+        nil
     }
 
     func deviceStatus() async throws -> DeviceStatusInfo? {

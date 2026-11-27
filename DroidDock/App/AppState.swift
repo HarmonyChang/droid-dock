@@ -139,6 +139,10 @@ final class AppState {
            deviceManager.currentState == .ready {
             currentDeviceStatus = status
         }
+        if deviceManager.selectedDeviceID == devID,
+           deviceManager.currentState == .ready {
+            await browser.refreshStorages()
+        }
     }
 
     func refreshDevices() async {
@@ -200,10 +204,25 @@ final class AppState {
     private func startStatusPollingIfNeeded() {
         guard statusPollingTask == nil else { return }
         statusPollingTask = Task { @MainActor [weak self] in
+            var idleTickCount = 0
             while !Task.isCancelled {
-                try? await Task.sleep(nanoseconds: 60_000_000_000)
+                try? await Task.sleep(nanoseconds: 5_000_000_000)
                 guard !Task.isCancelled, let self else { return }
-                await self.refreshDeviceStatus(force: false)
+                guard self.deviceManager.currentState == .ready else {
+                    idleTickCount = 0
+                    continue
+                }
+                if self.transferModel.activeCount > 0 {
+                    // 传输进行中每 5 秒仅做轻量 GetStorageInfo / df 刷新左下角剩余空间，不做重型状态轮询
+                    idleTickCount = 0
+                    await self.browser.refreshStorages()
+                } else if !self.transferModel.isPreparing {
+                    idleTickCount += 1
+                    if idleTickCount >= 12 {
+                        idleTickCount = 0
+                        await self.refreshDeviceStatus(force: false)
+                    }
+                }
             }
         }
     }

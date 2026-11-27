@@ -1,4 +1,5 @@
 import AppKit
+import AVFoundation
 import CryptoKit
 import Foundation
 import ImageIO
@@ -366,5 +367,97 @@ final class MediaAndThumbnailTests: XCTestCase {
         NSRect(x: 0, y: 0, width: width, height: height).fill()
         NSGraphicsContext.restoreGraphicsState()
         return rep.representation(using: .png, properties: [:])
+    }
+
+    func testThumbnailPipelineExtractsVideoCoverViaPartialReadsWithoutFullDownload() async throws {
+        var videoData = try await makeTestMP4Data(width: 160, height: 120)
+        // 追加合法的 3 MB ISO BMFF `free` box，确保文件体积大于 maxFallbackVideoBytes（2 MB）
+        let paddingBoxSize = UInt32(3 * 1024 * 1024)
+        var freeHeader = paddingBoxSize.bigEndian
+        videoData.append(Data(bytes: &freeHeader, count: 4))
+        videoData.append(Data("free".utf8))
+        videoData.append(Data(count: Int(paddingBoxSize) - 8))
+
+        XCTAssertGreaterThan(UInt64(videoData.count), ThumbnailPipeline.maxFallbackVideoBytes)
+
+        let storageID: UInt32 = 65537
+        let bigVideo = RemoteNode(
+            id: "\(storageID):777",
+            storageID: storageID,
+            path: "/DCIM/Camera/VID_2026_4K.mp4",
+            name: "VID_2026_4K.mp4",
+            isDirectory: false,
+            size: UInt64(videoData.count),
+            modified: Date(),
+            kind: .video
+        )
+        let provider = FakeFileProvider(
+            directories: [storageID: ["/DCIM/Camera": [bigVideo]]],
+            filePayloads: [bigVideo.id: videoData]
+        )
+        let session = DeviceSession(provider: provider)
+        let cacheDir = tempRoot.appendingPathComponent("VideoCoverCache", isDirectory: true)
+        let pipeline = ThumbnailPipeline(cacheDirectory: cacheDir, maxDiskBytes: 8 * 1024 * 1024)
+
+        let thumb = try await pipeline.thumbnail(for: bigVideo, deviceID: "usb-oneplus", session: session)
+        let thumbData = try XCTUnwrap(thumb)
+        XCTAssertGreaterThan(thumbData.count, 100)
+        XCTAssertNotNil(NSImage(data: thumbData))
+
+        let ops = await provider.recordedOperations
+        XCTAssertTrue(ops.contains { $0.hasPrefix("partial:\(bigVideo.id):") })
+        XCTAssertFalse(ops.contains { $0.hasPrefix("download:") })
+    }
+
+    private func makeTestMP4Data(width: Int, height: Int) async throws -> Data {
+        let outURL = tempRoot.appendingPathComponent("sample-\(UUID().uuidString).mp4")
+        defer { try? FileManager.default.removeItem(at: outURL) }
+
+        let writer = try AVAssetWriter(outputURL: outURL, fileType: .mp4)
+        let settings: [String: Any] = [
+            AVVideoCodecKey: AVVideoCodecType.h264,
+            AVVideoWidthKey: width,
+            AVVideoHeightKey: height,
+        ]
+        let input = AVAssetWriterInput(mediaType: .video, outputSettings: settings)
+        let adaptor = AVAssetWriterInputPixelBufferAdaptor(
+            assetWriterInput: input,
+            sourcePixelBufferAttributes: [
+                kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32ARGB,
+                kCVPixelBufferWidthKey as String: width,
+                kCVPixelBufferHeightKey as String: height,
+            ]
+        )
+        writer.add(input)
+        XCTAssertTrue(writer.startWriting())
+        writer.startSession(atSourceTime: .zero)
+
+        for frameIdx in 0..<4 {
+            while !input.isReadyForMoreMediaData {
+                try await Task.sleep(nanoseconds: 5_000_000)
+            }
+            var pixelBufferOut: CVPixelBuffer?
+            let status = CVPixelBufferCreate(
+                kCFAllocatorDefault,
+                width,
+                height,
+                kCVPixelFormatType_32ARGB,
+                nil,
+                &pixelBufferOut
+            )
+            XCTAssertEqual(status, kCVReturnSuccess)
+            let pb = try XCTUnwrap(pixelBufferOut)
+            CVPixelBufferLockBaseAddress(pb, [])
+            if let base = CVPixelBufferGetBaseAddress(pb) {
+                memset(base, 0x80, CVPixelBufferGetDataSize(pb))
+            }
+            CVPixelBufferUnlockBaseAddress(pb, [])
+            let pts = CMTime(value: Int64(frameIdx) * 300, timescale: 600)
+            XCTAssertTrue(adaptor.append(pb, withPresentationTime: pts))
+        }
+        input.markAsFinished()
+        await writer.finishWriting()
+        XCTAssertEqual(writer.status, .completed)
+        return try Data(contentsOf: outURL)
     }
 }

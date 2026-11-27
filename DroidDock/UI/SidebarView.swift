@@ -368,28 +368,49 @@ struct SidebarView: View {
         let ratio = storage.totalBytes > 0
             ? min(1.0, max(0.0, Double(storage.usedBytes) / Double(storage.totalBytes)))
             : 0.0
+        let usedText = PathUtils.formatCompactStorage(storage.usedBytes)
+        let totalText = PathUtils.formatCompactStorage(storage.totalBytes)
+        let freeText = PathUtils.formatCompactStorage(storage.freeBytes)
+        let percent = Int((ratio * 100).rounded())
 
-        return VStack(alignment: .leading, spacing: 6) {
-            HStack {
+        return VStack(alignment: .leading, spacing: 5) {
+            HStack(spacing: 4) {
                 Text(storage.name)
                     .lineLimit(1)
-                Spacer()
-                Text("\(PathUtils.formatByteCount(storage.usedBytes)) / \(PathUtils.formatByteCount(storage.totalBytes))")
+                    .truncationMode(.tail)
+                Spacer(minLength: 4)
+                Text("可用 \(freeText)")
                     .monospacedDigit()
+                    .lineLimit(1)
+                    .fixedSize(horizontal: true, vertical: false)
             }
-            .font(.system(size: 11))
-            .foregroundStyle(palette.secondaryText)
+            .font(.system(size: 11, weight: .medium))
+            .foregroundStyle(palette.primaryText)
 
             GeometryReader { proxy in
                 ZStack(alignment: .leading) {
                     Capsule()
                         .fill(palette.dividerColor)
                     Capsule()
-                        .fill(palette.accent)
+                        .fill(ratio > 0.9 ? palette.warningColor : palette.accent)
                         .frame(width: proxy.size.width * ratio)
                 }
             }
             .frame(height: 5)
+
+            HStack(spacing: 4) {
+                Text("已用 \(usedText) / 共 \(totalText)")
+                    .monospacedDigit()
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.85)
+                Spacer(minLength: 4)
+                Text("\(percent)%")
+                    .monospacedDigit()
+                    .lineLimit(1)
+                    .fixedSize(horizontal: true, vertical: false)
+            }
+            .font(.system(size: 10.5))
+            .foregroundStyle(palette.secondaryText)
         }
         .padding(.top, 4)
     }
@@ -600,7 +621,7 @@ private struct DeviceDetailsPopoverView: View {
                 if let storage = appState.browser.currentStorage {
                     detailRow(
                         title: "内部存储",
-                        value: "可用 \(PathUtils.formatByteCount(storage.freeBytes)) / 共 \(PathUtils.formatByteCount(storage.totalBytes))"
+                        value: "可用 \(PathUtils.formatCompactStorage(storage.freeBytes)) / 共 \(PathUtils.formatCompactStorage(storage.totalBytes))"
                     )
                 }
 
